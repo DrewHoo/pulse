@@ -1,0 +1,102 @@
+:root {
+  color-scheme: dark;
+  --bg: #0a0a0b;
+  --fg: #f2f2f3;
+  --mute: #8d8d93;
+  --dim: #1c1c20;
+  --line: #26262b;
+  --ghost: #34343a;
+  --bar: #e4e4e8;
+  --accent: #ffb340;
+  --up: #6fd38a;
+  --down: #ff7b72;
+  --num: ui-rounded, -apple-system, system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--bg); }
+
+body {
+  margin: 0;
+  color: var(--fg);
+  background: var(--bg);
+  font: 14px/1.25 -apple-system, system-ui, "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  padding: max(10px, env(safe-area-inset-top)) 14px max(12px, env(safe-area-inset-bottom));
+  overscroll-behavior-y: contain;
+}
+
+main { max-width: 480px; margin: 0 auto; }
+
+h1, h2 { margin: 0; font-weight: 600; }
+
+.top {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 2px 0 8px; cursor: pointer; user-select: none; -webkit-user-select: none;
+}
+.top h1 { font-size: 14px; letter-spacing: 0.01em; }
+.asof { color: var(--mute); font-size: 12px; }
+
+.note {
+  margin: 0 0 8px; padding: 6px 8px; border-radius: 6px;
+  background: var(--dim); color: var(--accent); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.stat { display: flex; flex-direction: column; min-width: 0; }
+.stat b { font: 600 22px/1 var(--num); letter-spacing: -0.02em; }
+.stat span { color: var(--mute); font-size: 11px; margin-top: 3px; white-space: nowrap; }
+.stat em { font-style: normal; opacity: 0.7; }
+.stat .up { color: var(--up); }
+.stat .down { color: var(--down); }
+
+.hero {
+  display: grid; grid-template-columns: 1.6fr 1fr 1fr; align-items: end; gap: 10px;
+  padding: 2px 0 10px;
+}
+.hero .big b { font-size: 56px; color: var(--accent); }
+
+.bars { display: block; width: 100%; height: 76px; }
+.bars rect.ghost { fill: var(--ghost); }
+.bars rect.today { fill: var(--bar); }
+.bars rect.now { fill: var(--accent); }
+.bars text { fill: var(--mute); font-size: 9px; font-family: -apple-system, system-ui, sans-serif; }
+.bars text.peak { fill: var(--ghost); }
+
+.strip {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+  padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+}
+.strip .stat b { font-size: 19px; }
+
+.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; padding: 10px 0 8px; }
+/* fixed tracks, so the bar's percent height has something definite to resolve against */
+.day { display: grid; grid-template-rows: 14px 30px 14px; align-items: end; text-align: center; min-width: 0; }
+.day b { font: 500 11px/1 var(--num); color: var(--mute); margin-bottom: 3px; }
+.day i { display: block; width: 100%; background: var(--ghost); border-radius: 2px 2px 0 0; min-height: 1px; align-self: end; }
+.day.is-today i { background: var(--bar); }
+.day.is-today b { color: var(--fg); }
+.day span { color: var(--mute); font-size: 10px; margin-top: 3px; }
+
+.lists { display: grid; gap: 10px; }
+.list header, .row { display: grid; grid-template-columns: 1fr 44px 44px; gap: 8px; align-items: baseline; }
+.list header { padding: 0 2px 4px; border-bottom: 1px solid var(--line); color: var(--mute); font-size: 11px; }
+.list h2 { font-size: 12px; color: var(--fg); }
+.row { position: relative; padding: 3px 2px; font-size: 13px; }
+.row .name { position: relative; isolation: isolate; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .name i { position: absolute; left: -2px; top: -1px; bottom: -1px; background: var(--dim); border-radius: 3px; z-index: -1; }
+.list .n, .list .w { text-align: right; }
+.row .n { font-family: var(--num); font-weight: 600; }
+.row .w { color: var(--mute); }
+.empty { color: var(--mute); font-size: 12px; padding: 6px 2px; }
+
+.message { padding: 24px 0; color: var(--mute); }
+.message h2 { color: var(--fg); font-size: 16px; margin-bottom: 6px; }
+.message p { margin: 0; word-break: break-word; }
+
+@media (min-width: 480px) {
+  .lists { grid-template-columns: 1fr 1fr; gap: 16px; }
+}

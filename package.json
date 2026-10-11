@@ -1,0 +1,25 @@
+{
+  "name": "pulse",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A one-screen pageview dashboard for drewhoover.com, read from Mixpanel through a Cloudflare Worker.",
+  "scripts": {
+    "dev": "vite",
+    "dev:worker": "wrangler dev -c worker/wrangler.jsonc --port 8787",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p worker/tsconfig.json",
+    "test": "vitest run",
+    "gen:icons": "node scripts/gen-icons.mjs",
+    "deploy:worker": "wrangler deploy -c worker/wrangler.jsonc"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261011.1",
+    "sharp": "^0.35.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.149.0"
+  }
+}

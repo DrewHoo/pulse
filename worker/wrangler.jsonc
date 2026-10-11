@@ -1,0 +1,18 @@
+{
+  // The pulse API worker. Deploy with: npm run deploy:worker
+  // Secrets (set once, never in this file):
+  //   npx wrangler secret put PULSE_TOKEN -c worker/wrangler.jsonc
+  //   npx wrangler secret put MIXPANEL_SERVICE_ACCOUNT -c worker/wrangler.jsonc   ("<username>:<secret>")
+  "name": "pulse-api",
+  "main": "index.ts",
+  "compatibility_date": "2026-10-04",
+  "routes": [{ "pattern": "drewhoover.com/pulse/api/*", "zone_name": "drewhoover.com" }],
+  "workers_dev": false,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": {
+    "MIXPANEL_PROJECT_ID": "3518004",
+    "MIXPANEL_TZ": "America/New_York",
+    "MIXPANEL_API": "https://mixpanel.com",
+    "PAGEVIEW_EVENT": "$mp_web_page_view"
+  }
+}

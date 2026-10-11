@@ -1,0 +1,13 @@
+node_modules
+dist
+.DS_Store
+.vite
+*.log
+.claude/
+
+# secrets for `wrangler dev` (PULSE_TOKEN, MIXPANEL_SERVICE_ACCOUNT)
+.dev.vars
+.env
+
+# wrangler local dev state
+.wrangler/
