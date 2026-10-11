@@ -43,21 +43,26 @@ function hourly(values: Record<string, number> | undefined, date: string): numbe
   return Array.from({ length: 24 }, (_, h) => values?.[`${date} ${pad2(h)}:00:00`] ?? 0);
 }
 
+// Segments that rename to the same row (www.reddit.com and reddit.com) merge.
 function rows(series: Series, today: string, rename: (name: string) => string): Row[] {
-  const out: Row[] = [];
-  for (const [name, byDay] of Object.entries(series.data.values)) {
+  const merged = new Map<string, Row>();
+  for (const [raw, byDay] of Object.entries(series.data.values)) {
     const week = sum(Object.values(byDay));
     if (week === 0) continue;
-    out.push({ name: rename(name), today: byDay[today] ?? 0, week });
+    const name = rename(raw);
+    const row = merged.get(name) ?? { name, today: 0, week: 0 };
+    row.today += byDay[today] ?? 0;
+    row.week += week;
+    merged.set(name, row);
   }
-  return out
+  return [...merged.values()]
     .sort((a, b) => b.today - a.today || b.week - a.week || a.name.localeCompare(b.name))
     .slice(0, LIST_ROWS);
 }
 
 // An event without the property lands in Mixpanel's "undefined" segment. For
 // referrers that is a visit with no document.referrer, so it reads as direct.
-const referrerName = (name: string) => (name === 'undefined' ? '(direct)' : name);
+const referrerName = (name: string) => (name === 'undefined' ? '(direct)' : name.replace(/^www\./, ''));
 const pageName = (name: string) => (name === 'undefined' ? '(no path)' : name);
 
 export function shape(raw: Raw, now: LocalNow, fetchedAt: Date = new Date()): Stats {

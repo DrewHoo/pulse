@@ -25,6 +25,7 @@ function raw(): Raw {
       'undefined': { '2026-10-10': 20, '2026-10-11': 7 },
       'news.ycombinator.com': { '2026-10-09': 40 },
       'nothing.example': { '2026-10-09': 0 },
+      'www.google.com': { '2026-10-11': 2 },
     }, dayLabels),
     pages: series({
       '/cfb-streak-king/': { '2026-10-11': 9 },
@@ -62,9 +63,10 @@ describe('shape', () => {
     expect(t.today).toBe(0);
   });
 
-  it('ranks rows by today then by week, names direct traffic, drops empty segments', () => {
+  it('ranks rows by today then by week, names direct traffic, merges www., drops empty segments', () => {
     expect(s.referrers.map((r) => r.name)).toEqual(['(direct)', 'google.com', 'news.ycombinator.com']);
     expect(s.referrers[0]).toEqual({ name: '(direct)', today: 7, week: 27 });
+    expect(s.referrers[1]).toEqual({ name: 'google.com', today: 5, week: 10 });
     expect(s.pages.map((r) => [r.name, r.today, r.week])).toEqual([['/', 9, 13], ['/cfb-streak-king/', 9, 9]]);
   });
 
