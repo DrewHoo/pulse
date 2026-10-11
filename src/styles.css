@@ -82,14 +82,15 @@ h1, h2 { margin: 0; font-weight: 600; }
 .day span { color: var(--mute); font-size: 10px; margin-top: 3px; }
 
 .lists { display: grid; gap: 10px; }
-.list header, .row { display: grid; grid-template-columns: 1fr 44px 44px; gap: 8px; align-items: baseline; }
+.list header, .row { display: grid; grid-template-columns: 1fr 40px 34px 44px; gap: 6px; align-items: baseline; }
 .list header { padding: 0 2px 4px; border-bottom: 1px solid var(--line); color: var(--mute); font-size: 11px; }
 .list h2 { font-size: 12px; color: var(--fg); }
 .row { position: relative; padding: 3px 2px; font-size: 13px; }
 .row .name { position: relative; isolation: isolate; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .name i { position: absolute; left: -2px; top: -1px; bottom: -1px; background: var(--dim); border-radius: 3px; z-index: -1; }
-.list .n, .list .w { text-align: right; }
+.list .n, .list .v, .list .w { text-align: right; }
 .row .n { font-family: var(--num); font-weight: 600; }
+.row .v { color: var(--mute); font-size: 12px; }
 .row .w { color: var(--mute); }
 .empty { color: var(--mute); font-size: 12px; padding: 6px 2px; }
 

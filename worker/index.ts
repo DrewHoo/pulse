@@ -6,12 +6,14 @@
 //   GET /pulse/api/stats   bearer token (or ?k=), the shaped stats JSON
 //   GET /pulse/api/health  no auth, whether the secrets are set
 //
-// Mixpanel allows 60 Query API calls an hour per project and a refresh costs
-// four, so the shaped answer sits in the edge cache for CACHE_SECONDS and
-// every client, page or widget, reads the same copy.
+// Mixpanel allows 60 Query API calls an hour per project. A full refresh is
+// ten calls, so the raw answers sit in the edge cache in two groups: the
+// hourly series (2 calls) for FAST_SECONDS and everything else (8 calls) for
+// SLOW_SECONDS. Polled without pause that is 24 + 24 calls an hour, and every
+// client, page or widget, reads the same copies.
 
-import { shape, type Raw, type Series } from './shape';
-import { addDays, localNow } from './time';
+import { INTERNAL, shape, type Fast, type Raw, type Series, type Slow } from './shape';
+import { addDays, localNow, type LocalNow } from './time';
 
 export interface Env {
   MIXPANEL_SERVICE_ACCOUNT?: string; // secret: "<username>:<secret>" of a Mixpanel service account
@@ -22,13 +24,16 @@ export interface Env {
   PAGEVIEW_EVENT: string;
 }
 
-const CACHE_SECONDS = 300;
-const STATS_VERSION = 1; // bump with any change to the shape, so a stale cached copy is skipped
+const FAST_SECONDS = 300;
+const SLOW_SECONDS = 1200;
+const RAW_VERSION = 2; // bump with any change to what is fetched, so a stale cached group is skipped
+
+const JSON_TYPE = 'application/json; charset=utf-8';
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers },
+    headers: { 'content-type': JSON_TYPE, 'cache-control': 'no-store', ...headers },
   });
 
 const enc = new TextEncoder();
@@ -44,32 +49,81 @@ function bearer(req: Request): string | null {
   return m?.[1]?.trim() || null;
 }
 
-async function query(env: Env, path: string, params: Record<string, string>): Promise<Series> {
+// Mixpanel also caps a project at five concurrent queries, so every call of a
+// refresh goes through one small pool.
+type Run = <T>(job: () => Promise<T>) => Promise<T>;
+function pool(size: number): Run {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  const next = () => { active--; waiting.shift()?.(); };
+  return async (job) => {
+    if (active >= size) await new Promise<void>((resolve) => waiting.push(resolve));
+    active++;
+    try { return await job(); } finally { next(); }
+  };
+}
+
+interface Client { env: Env; run: Run }
+
+async function query({ env, run }: Client, path: string, params: Record<string, string>): Promise<Series> {
   const url = new URL(`${env.MIXPANEL_API}/api/query/${path}`);
   url.searchParams.set('project_id', env.MIXPANEL_PROJECT_ID);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const res = await fetch(url, {
+  const res = await run(() => fetch(url, {
     headers: { authorization: `Basic ${btoa(env.MIXPANEL_SERVICE_ACCOUNT!)}`, accept: 'application/json' },
-  });
+  }));
   if (!res.ok) throw new Error(`mixpanel ${path} ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return res.json();
 }
 
-async function fetchRaw(env: Env, today: string): Promise<Raw> {
-  const event = env.PAGEVIEW_EVENT;
-  const yesterday = addDays(today, -1);
-  const weekStart = addDays(today, -6);
-  const events = (unit: string, from_date: string) =>
-    query(env, 'events', { event: JSON.stringify([event]), type: 'general', unit, from_date, to_date: today });
-  const segmentation = (on: string) =>
-    query(env, 'segmentation', { event, from_date: weekStart, to_date: today, unit: 'day', on, limit: '50' });
-  const [hours, days, referrers, pages] = await Promise.all([
-    events('hour', yesterday),
-    events('day', weekStart),
-    segmentation('properties["$referring_domain"]'),
-    segmentation('properties["current_url_path"]'),
+async function fetchFast(c: Client, today: string): Promise<Fast> {
+  const event = JSON.stringify([c.env.PAGEVIEW_EVENT]);
+  const from_date = addDays(today, -1);
+  const [hours, hoursUnique] = await Promise.all([
+    query(c, 'events', { event, type: 'general', unit: 'hour', from_date, to_date: today }),
+    query(c, 'events', { event, type: 'unique', unit: 'hour', from_date, to_date: today }),
   ]);
-  return { event, hours, days, referrers, pages };
+  return { hours, hoursUnique };
+}
+
+async function fetchSlow(c: Client, today: string): Promise<Slow> {
+  const event = c.env.PAGEVIEW_EVENT;
+  const weekStart = addDays(today, -6);
+  const events = (type: string) =>
+    query(c, 'events', { event: JSON.stringify([event]), type, unit: 'day', from_date: weekStart, to_date: today });
+  const segmentation = (on: string, type: string, from_date: string, where?: string) =>
+    query(c, 'segmentation', {
+      event, type, on, from_date, to_date: today, unit: 'day', limit: '60', ...(where ? { where } : {}),
+    });
+  const outside = `defined(properties["$referrer"]) and properties["$referring_domain"] != "${INTERNAL}"`;
+  const [days, daysUnique, domains, domainsUniqueToday, urls, urlsUniqueToday, pages, pagesUniqueToday] =
+    await Promise.all([
+      events('general'),
+      events('unique'),
+      segmentation('properties["$referring_domain"]', 'general', weekStart),
+      segmentation('properties["$referring_domain"]', 'unique', today),
+      segmentation('properties["$referrer"]', 'general', weekStart, outside),
+      segmentation('properties["$referrer"]', 'unique', today, outside),
+      segmentation('properties["current_url_path"]', 'general', weekStart),
+      segmentation('properties["current_url_path"]', 'unique', today),
+    ]);
+  return { days, daysUnique, domains, domainsUniqueToday, urls, urlsUniqueToday, pages, pagesUniqueToday };
+}
+
+// A raw group from the edge cache, or fetched and stored for `ttl`. The key
+// carries the project-local date so a group from before midnight is not read
+// as today's.
+async function cachedGroup<T>(
+  ctx: ExecutionContext, name: string, now: LocalNow, ttl: number, load: () => Promise<T>,
+): Promise<{ value: T; hit: boolean }> {
+  const key = new Request(`https://pulse-cache.invalid/${name}?v=${RAW_VERSION}&d=${now.date}`);
+  const hit = await caches.default.match(key);
+  if (hit) return { value: await hit.json<T>(), hit: true };
+  const value = await load();
+  ctx.waitUntil(caches.default.put(key, new Response(JSON.stringify(value), {
+    headers: { 'content-type': JSON_TYPE, 'cache-control': `public, max-age=${ttl}` },
+  })));
+  return { value, hit: false };
 }
 
 export default {
@@ -87,29 +141,20 @@ export default {
     const given = bearer(req) ?? url.searchParams.get('k');
     if (!given || !sameToken(given, env.PULSE_TOKEN!)) return json({ error: 'unauthorized' }, 401);
 
-    const cache = caches.default;
-    const key = new Request(`https://pulse-cache.invalid/stats?v=${STATS_VERSION}`);
-    const hit = await cache.match(key);
-    if (hit) {
-      const headers = new Headers(hit.headers);
-      headers.set('cache-control', 'no-store');
-      headers.set('x-pulse-cache', 'hit');
-      return new Response(hit.body, { status: hit.status, headers });
-    }
-
     const now = localNow(env.MIXPANEL_TZ);
+    const client: Client = { env, run: pool(4) };
     let raw: Raw;
+    let cache: string;
     try {
-      raw = await fetchRaw(env, now.date);
+      const [fast, slow] = await Promise.all([
+        cachedGroup(ctx, 'fast', now, FAST_SECONDS, () => fetchFast(client, now.date)),
+        cachedGroup(ctx, 'slow', now, SLOW_SECONDS, () => fetchSlow(client, now.date)),
+      ]);
+      raw = { event: env.PAGEVIEW_EVENT, ...fast.value, ...slow.value };
+      cache = `fast=${fast.hit ? 'hit' : 'miss'} slow=${slow.hit ? 'hit' : 'miss'}`;
     } catch (e) {
       return json({ error: e instanceof Error ? e.message : String(e) }, 502);
     }
-    const body = JSON.stringify(shape(raw, now));
-    ctx.waitUntil(cache.put(key, new Response(body, {
-      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': `public, max-age=${CACHE_SECONDS}` },
-    })));
-    return new Response(body, {
-      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-pulse-cache': 'miss' },
-    });
+    return json(shape(raw, now), 200, { 'x-pulse-cache': cache });
   },
 } satisfies ExportedHandler<Env>;

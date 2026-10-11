@@ -56,7 +56,7 @@ function days(s: Stats): string {
   return `<div class="days">${s.days.map((d, i) => `
     <div class="day${i === s.days.length - 1 ? ' is-today' : ''}">
       <b>${fmt(d.n)}</b>
-      <i style="height:${Math.round((d.n / peak) * 100)}%"></i>
+      <i style="height:${Math.round((d.n / peak) * 100)}%" title="${fmt(d.visitors)} visitors"></i>
       <span>${letter(d.date)}</span>
     </div>`).join('')}</div>`;
 }
@@ -67,10 +67,11 @@ function list(title: string, rows: Row[]): string {
     <div class="row" title="${esc(r.name)}">
       <span class="name"><i style="width:${Math.round((r.today / peak) * 100)}%"></i>${esc(r.name)}</span>
       <span class="n">${fmt(r.today)}</span>
+      <span class="v">${fmt(r.visitors)}</span>
       <span class="w">${fmt(r.week)}</span>
     </div>`).join('');
   return `<section class="list">
-    <header><h2>${title}</h2><span class="n">today</span><span class="w">7d</span></header>
+    <header><h2>${title}</h2><span class="n">views</span><span class="v">vis</span><span class="w">7d</span></header>
     ${body}
   </section>`;
 }
@@ -86,15 +87,15 @@ export function render(s: Stats, note = ''): string {
   </header>
   ${note ? `<p class="note">${esc(note)}</p>` : ''}
   <section class="hero">
-    <div class="stat big"><b>${fmt(s.totals.thisHour)}</b><span>this hour <em>${s.minute}m in</em></span></div>
+    <div class="stat big"><b>${fmt(s.totals.thisHour)}</b><span>this hour <em>${s.minute}m in · ${fmt(s.totals.thisHourVisitors)} vis</em></span></div>
     <div class="stat"><b>${fmt(s.totals.lastHour)}</b><span>last hour</span></div>
     <div class="stat"><b>${fmt(perHour)}</b><span>per hr today</span></div>
   </section>
   ${bars(s)}
   <section class="strip">
-    <div class="stat"><b>${fmt(s.totals.today)}</b><span>today</span></div>
+    <div class="stat"><b>${fmt(s.totals.today)}</b><span>today <em>${fmt(s.totals.todayVisitors)} vis</em></span></div>
     <div class="stat"><b class="${delta < 0 ? 'down' : 'up'}">${signed(delta)}</b><span>vs yday ${esc(pct(s.totals.today, s.totals.yesterdayToHour))}</span></div>
-    <div class="stat"><b>${fmt(s.totals.yesterday)}</b><span>yesterday</span></div>
+    <div class="stat"><b>${fmt(s.totals.yesterday)}</b><span>yday <em>${fmt(s.totals.yesterdayVisitors)} vis</em></span></div>
     <div class="stat"><b>${fmt(s.totals.week)}</b><span>7 days</span></div>
   </section>
   ${days(s)}

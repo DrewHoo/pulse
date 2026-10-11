@@ -10,7 +10,7 @@ import type { Stats } from './stats';
 
 const API = `${import.meta.env.BASE_URL}api/stats`;
 const TOKEN_KEY = 'pulse.token';
-const LAST_KEY = 'pulse.last';
+const LAST_KEY = 'pulse.last.v2'; // versioned with the stats shape, so an old cached answer is not painted
 const REFRESH_MS = 5 * 60 * 1000;
 const STALE_MS = 60 * 1000;
 
