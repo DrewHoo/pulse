@@ -25,14 +25,19 @@ export interface Slow {
   urlsUniqueToday: Series;
   pages: Series;              // current_url_path
   pagesUniqueToday: Series;
+  shares: Series;             // the share worker's link previews, by the app that fetched them
 }
 
 export interface Raw extends Fast, Slow { event: string }
 
 export interface Row { name: string; today: number; visitors: number; week: number }
 
+// A link preview is a bot fetching a shared link, so it has no visitors.
+export interface ShareRow { name: string; today: number; week: number }
+
 export interface Stats {
-  v: 2;
+  v: 3;
+  path: PathKey;
   fetchedAt: string;
   tz: string;
   date: string;
@@ -51,6 +56,24 @@ export interface Stats {
   };
   referrers: Row[];
   pages: Row[];
+  shares: ShareRow[];
+}
+
+// The picker's filters: every view is one site's pages or all of
+// drewhoover.com. An allowlist, not a free path, because each filter is its
+// own set of Query API calls against the hourly budget (see index.ts).
+export const PATHS = [
+  { key: 'cfb-streak-king', label: 'streak king', prefix: '/cfb-streak-king/' },
+  { key: 'all', label: 'all', prefix: null },
+] as const;
+export type PathKey = (typeof PATHS)[number]['key'];
+export const DEFAULT_PATH: PathKey = 'cfb-streak-king';
+export const isPathKey = (k: string | null): k is PathKey => PATHS.some((p) => p.key === k);
+
+// The Query API's `where` for a filter's pageviews, or none for all.
+export function pathWhere(key: PathKey): string | undefined {
+  const prefix = PATHS.find((p) => p.key === key)?.prefix;
+  return prefix ? `"${prefix}" in properties["current_url_path"]` : undefined;
 }
 
 export const LIST_ROWS = 12;
@@ -106,7 +129,28 @@ export function outsideName(url: string): string {
   return host + path;
 }
 
-export function shape(raw: Raw, now: LocalNow, fetchedAt: Date = new Date()): Stats {
+// The share worker (cfb-streak-king's workers/share) reports one event per
+// link preview, its `agent` the app that fetched the link. A chat or social
+// app fetching one means someone pasted the link there, which the pageviews
+// can't show: the click that follows arrives with no referrer and reads as
+// direct. Search crawlers fetch links too, and aren't shares.
+const SHARE_APPS: Record<string, string> = {
+  imessage: 'iMessage', discord: 'Discord', slack: 'Slack', whatsapp: 'WhatsApp', telegram: 'Telegram',
+  facebook: 'Facebook', twitter: 'X', reddit: 'Reddit', linkedin: 'LinkedIn', bluesky: 'Bluesky', mastodon: 'Mastodon',
+};
+
+function shareRows(views: Series, today: string): ShareRow[] {
+  const out: ShareRow[] = [];
+  for (const [agent, byDay] of Object.entries(views.data.values)) {
+    const name = SHARE_APPS[agent];
+    const week = sum(Object.values(byDay));
+    if (!name || week === 0) continue;
+    out.push({ name, today: byDay[today] ?? 0, week });
+  }
+  return out.sort((a, b) => b.today - a.today || b.week - a.week || a.name.localeCompare(b.name));
+}
+
+export function shape(raw: Raw, now: LocalNow, path: PathKey = 'all', fetchedAt: Date = new Date()): Stats {
   const yesterdayDate = addDays(now.date, -1);
   const cut = <T,>(xs: T[]) => xs.map((n, h) => (h <= now.hour ? n : null));
   const todayAll = hourly(raw.hours.data.values[raw.event], now.date);
@@ -130,7 +174,8 @@ export function shape(raw: Raw, now: LocalNow, fetchedAt: Date = new Date()): St
   ]);
 
   return {
-    v: 2,
+    v: 3,
+    path,
     fetchedAt: fetchedAt.toISOString(),
     tz: now.tz,
     date: now.date,
@@ -151,5 +196,6 @@ export function shape(raw: Raw, now: LocalNow, fetchedAt: Date = new Date()): St
     },
     referrers,
     pages: rank(rows(raw.pages, raw.pagesUniqueToday, now.date, pageName)),
+    shares: shareRows(raw.shares, now.date),
   };
 }

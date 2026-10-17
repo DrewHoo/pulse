@@ -1,7 +1,13 @@
 # pulse
 
 One screen of drewhoover.com's pageviews: this hour, today against yesterday
-at the same hour, the last seven days, and the top referrers and pages. It is
+at the same hour, the last seven days, the top referrers and pages, and the
+apps Streak King links were shared in (the share worker's link previews, whose
+clicks arrive with no referrer and read as direct).
+A picker under the header switches the whole screen between Streak King's
+pages (`/cfb-streak-king/`, the default) and all of drewhoover.com; the
+choice rides in the URL as `?p=all`. Each filter is its own set of Query API
+calls, so the filters are an allowlist (`PATHS` in `worker/shape.ts`). It is
 a static page on GitHub Pages at `https://drewhoover.com/pulse/` that reads a
 Cloudflare Worker at `https://drewhoover.com/pulse/api/stats`; the worker holds
 the Mixpanel service account and caches each answer for five minutes.

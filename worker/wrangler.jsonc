@@ -13,6 +13,7 @@
     "MIXPANEL_PROJECT_ID": "3518004",
     "MIXPANEL_TZ": "America/New_York",
     "MIXPANEL_API": "https://mixpanel.com",
-    "PAGEVIEW_EVENT": "$mp_web_page_view"
+    "PAGEVIEW_EVENT": "$mp_web_page_view",
+    "UNFURL_EVENT": "share unfurl"
   }
 }

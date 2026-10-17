@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { outsideName, shape, type Raw, type Series } from './shape';
+import { outsideName, pathWhere, shape, type Raw, type Series } from './shape';
 import { addDays, localNow } from './time';
 
 const EVENT = '$mp_web_page_view';
@@ -47,13 +47,20 @@ function raw(): Raw {
       '/': { '2026-10-10': 4, '2026-10-11': 9 },
     }),
     pagesUniqueToday: series({ '/cfb-streak-king/': { '2026-10-11': 3 }, '/': { '2026-10-11': 6 } }, ['2026-10-11']),
+    shares: series({
+      imessage: { '2026-10-09': 3, '2026-10-11': 2 },
+      discord: { '2026-10-10': 4 },
+      google: { '2026-10-11': 30 }, // a search crawler, not a share
+      'other-bot': { '2026-10-11': 12 },
+      slack: { '2026-10-08': 0 },
+    }),
   };
 }
 
 const NOW = { date: '2026-10-11', hour: 11, minute: 38, tz: 'America/New_York' };
 
 describe('shape', () => {
-  const s = shape(raw(), NOW, new Date('2026-10-11T15:38:00Z'));
+  const s = shape(raw(), NOW, 'cfb-streak-king', new Date('2026-10-11T15:38:00Z'));
 
   it('cuts today at the current hour and keeps all of yesterday', () => {
     expect(s.hours.today.slice(0, 12)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
@@ -101,9 +108,27 @@ describe('shape', () => {
     ]);
   });
 
+  it('lists link previews by chat or social app, without the crawlers', () => {
+    expect(s.shares).toEqual([
+      { name: 'iMessage', today: 2, week: 5 },
+      { name: 'Discord', today: 0, week: 4 },
+    ]);
+  });
+
   it('lists the seven days in order with visitors', () => {
     expect(s.days.map((d) => d.n)).toEqual([100, 200, 300, 400, 500, 600, 700]);
     expect(s.days[6]).toEqual({ date: '2026-10-11', n: 700, visitors: 70 });
+  });
+});
+
+describe('pathWhere', () => {
+  it('filters a site to its path prefix, and all to nothing', () => {
+    expect(pathWhere('cfb-streak-king')).toBe('"/cfb-streak-king/" in properties["current_url_path"]');
+    expect(pathWhere('all')).toBeUndefined();
+  });
+  it('carries the filter on the answer', () => {
+    expect(shape(raw(), NOW, 'cfb-streak-king').path).toBe('cfb-streak-king');
+    expect(shape(raw(), NOW).path).toBe('all');
   });
 });
 

@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "vite.config.ts", "worker/shape.ts", "worker/time.ts", "worker/*.test.ts"]
+  "include": ["src", "vite.config.ts", "worker/shape.ts", "worker/time.ts", "worker/shape.test.ts"]
 }

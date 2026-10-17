@@ -1,4 +1,5 @@
-import type { Row, Stats } from './stats';
+import { PATHS, type PathKey } from '../worker/shape';
+import type { Row, ShareRow, Stats } from './stats';
 
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -76,7 +77,33 @@ function list(title: string, rows: Row[]): string {
   </section>`;
 }
 
-export function render(s: Stats, note = ''): string {
+// Link previews: one row per app a Streak King link was pasted into. No
+// visitors column, since a preview is a bot's fetch, not a person.
+function shares(rows: ShareRow[]): string {
+  const peak = Math.max(1, ...rows.map((r) => r.week));
+  const body = rows.length === 0 ? `<div class="empty">no links shared this week</div>` : rows.map((r) => `
+    <div class="row">
+      <span class="name"><i style="width:${Math.round((r.week / peak) * 100)}%"></i>${esc(r.name)}</span>
+      <span class="n">${fmt(r.today)}</span>
+      <span class="v"></span>
+      <span class="w">${fmt(r.week)}</span>
+    </div>`).join('');
+  return `<section class="list">
+    <header><h2>Shared in</h2><span class="n">today</span><span class="v"></span><span class="w">7d</span></header>
+    ${body}
+    <p class="foot">Streak King link previews by app. Their clicks arrive as (direct).</p>
+  </section>`;
+}
+
+// The path filter, a row of buttons under the header; main.ts wires the clicks.
+function picker(current: PathKey | undefined): string {
+  if (!current) return '';
+  return `<nav class="paths" aria-label="pages">${PATHS.map((p) =>
+    `<button type="button" data-path="${p.key}" class="${p.key === current ? 'on' : ''}" aria-pressed="${p.key === current}">${esc(p.label)}</button>`,
+  ).join('')}</nav>`;
+}
+
+export function render(s: Stats, note = '', path: PathKey = s.path): string {
   const elapsed = Math.max(1, s.hour * 60 + s.minute) / 60;
   const perHour = Math.round(s.totals.today / elapsed);
   const delta = s.totals.today - s.totals.yesterdayToHour;
@@ -85,6 +112,7 @@ export function render(s: Stats, note = ''): string {
     <h1>drewhoover.com</h1>
     <span class="asof">as of ${clock(s.hour, s.minute)} · <span id="ago">${ago(s.fetchedAt)}</span></span>
   </header>
+  ${picker(path)}
   ${note ? `<p class="note">${esc(note)}</p>` : ''}
   <section class="hero">
     <div class="stat big"><b>${fmt(s.totals.thisHour)}</b><span>this hour <em>${s.minute}m in · ${fmt(s.totals.thisHourVisitors)} vis</em></span></div>
@@ -102,13 +130,15 @@ export function render(s: Stats, note = ''): string {
   <div class="lists">
     ${list('Referrers', s.referrers)}
     ${list('Pages', s.pages)}
+    ${shares(s.shares ?? [])}
   </div>`;
 }
 
-export function renderMessage(title: string, body: string): string {
+export function renderMessage(title: string, body: string, path?: PathKey): string {
   return `
   <header class="top" id="refresh" role="button" tabindex="0" aria-label="refresh">
     <h1>drewhoover.com</h1><span class="asof">pulse</span>
   </header>
+  ${picker(path)}
   <section class="message"><h2>${esc(title)}</h2><p>${esc(body)}</p></section>`;
 }

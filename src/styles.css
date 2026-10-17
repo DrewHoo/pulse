@@ -40,6 +40,13 @@ h1, h2 { margin: 0; font-weight: 600; }
 .top h1 { font-size: 14px; letter-spacing: 0.01em; }
 .asof { color: var(--mute); font-size: 12px; }
 
+.paths { display: flex; gap: 4px; margin: 0 0 8px; }
+.paths button {
+  font: inherit; font-size: 12px; color: var(--mute); background: var(--dim);
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer;
+}
+.paths button.on { color: var(--bg); background: var(--fg); border-color: var(--fg); }
+
 .note {
   margin: 0 0 8px; padding: 6px 8px; border-radius: 6px;
   background: var(--dim); color: var(--accent); font-size: 12px;
@@ -93,6 +100,7 @@ h1, h2 { margin: 0; font-weight: 600; }
 .row .v { color: var(--mute); font-size: 12px; }
 .row .w { color: var(--mute); }
 .empty { color: var(--mute); font-size: 12px; padding: 6px 2px; }
+.foot { margin: 4px 2px 0; color: var(--mute); font-size: 11px; }
 
 .message { padding: 24px 0; color: var(--mute); }
 .message h2 { color: var(--fg); font-size: 16px; margin-bottom: 6px; }
