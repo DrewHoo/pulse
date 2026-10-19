@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { outsideName, pathWhere, shape, type Raw, type Series } from './shape';
+import { aiName, outsideName, pageName, pathWhere, redditLink, shape, type Raw, type Series } from './shape';
 import { addDays, localNow } from './time';
 
 const EVENT = '$mp_web_page_view';
@@ -44,9 +44,9 @@ function raw(): Raw {
     }, ['2026-10-11']),
     pages: series({
       '/cfb-streak-king/': { '2026-10-11': 9 },
-      '/': { '2026-10-10': 4, '2026-10-11': 9 },
+      '/cfb-streak-king/games/': { '2026-10-10': 4, '2026-10-11': 9 },
     }),
-    pagesUniqueToday: series({ '/cfb-streak-king/': { '2026-10-11': 3 }, '/': { '2026-10-11': 6 } }, ['2026-10-11']),
+    pagesUniqueToday: series({ '/cfb-streak-king/': { '2026-10-11': 3 }, '/cfb-streak-king/games/': { '2026-10-11': 6 } }, ['2026-10-11']),
     shares: series({
       imessage: { '2026-10-09': 3, '2026-10-11': 2 },
       discord: { '2026-10-10': 4 },
@@ -54,6 +54,22 @@ function raw(): Raw {
       'other-bot': { '2026-10-11': 12 },
       slack: { '2026-10-08': 0 },
     }),
+    ai: series({
+      'chatgpt.com': { '2026-10-10': 13, '2026-10-11': 2 },
+      perplexity: { '2026-10-11': 3 },
+      'perplexity.ai': { '2026-10-09': 1 }, // a referrer, no tag: the same row
+      newsletter: { '2026-10-11': 8 },      // a tag, but not an assistant
+    }),
+    aiUniqueToday: series({ 'chatgpt.com': { '2026-10-11': 1 }, perplexity: { '2026-10-11': 1 } }, ['2026-10-11']),
+    returning: { today: 4, week: 9, weekVisitors: 120 },
+    reddit: series({
+      // a link post: pasted into the form, submitted four minutes later, then its text fetched
+      'https://drewhoover.com/cfb-streak-king/?t=texas&c=home%2Cunranked&scope=active': { '2026-10-10 21:00:00': 2, '2026-10-11 09:00:00': 1 },
+      'https://drewhoover.com/cfb-streak-king/?t=texas&amp;c=home%2Cunranked&amp;scope=active': { '2026-10-10 22:00:00': 1 },
+      // a markdown link in a comment, its closing paren caught
+      'https://drewhoover.com/cfb-streak-king/?dir=L&amp;c=ranked)': { '2026-10-11 08:00:00': 1, '2026-10-10 08:00:00': 0 },
+      'undefined': { '2026-10-11 08:00:00': 4 },
+    }, []),
   };
 }
 
@@ -77,12 +93,16 @@ describe('shape', () => {
       thisHour: 11,
       thisHourVisitors: 1,
       lastHour: 10,
+      lastHourVisitors: 1,
       today: 66,
       todayVisitors: 70,
+      todayVisitorHours: 12,
       yesterdayToHour: 10 * 12 + 66,
+      yesterdayVisitorHoursToHour: 24,
       yesterday: 10 * 24 + 276,
       yesterdayVisitors: 60,
       week: 2800,
+      weekVisitorsPerDay: 40,
     });
   });
 
@@ -101,17 +121,41 @@ describe('shape', () => {
     ]);
   });
 
-  it('ranks pages by today then by week, with today\'s visitors', () => {
+  it('ranks pages by today\'s visitors, without the filter\'s own path', () => {
     expect(s.pages).toEqual([
-      { name: '/', today: 9, visitors: 6, week: 13 },
-      { name: '/cfb-streak-king/', today: 9, visitors: 3, week: 9 },
+      { name: '/games/', today: 9, visitors: 6, week: 13 },
+      { name: '/', today: 9, visitors: 3, week: 9 },
     ]);
+  });
+
+  it('passes who came back through, or null when the query failed', () => {
+    expect(s.returning).toEqual({ today: 4, week: 9, weekVisitors: 120 });
+    expect(shape({ ...raw(), returning: null }, NOW).returning).toBeNull();
   });
 
   it('lists link previews by chat or social app, without the crawlers', () => {
     expect(s.shares).toEqual([
       { name: 'iMessage', today: 2, week: 5 },
       { name: 'Discord', today: 0, week: 4 },
+    ]);
+  });
+
+  it('lists AI assistants by tag or referrer, one row each, and nothing else', () => {
+    expect(s.ai).toEqual([
+      { name: 'Perplexity', today: 3, visitors: 1, week: 4 },
+      { name: 'ChatGPT', today: 2, visitors: 1, week: 15 },
+    ]);
+  });
+
+  it('counts every reddit-referred view as one row', () => {
+    expect(s.reddit.views).toEqual({ name: 'reddit', today: 50, visitors: 0, week: 50 });
+  });
+
+  it('lists the links Reddit fetched, a fetch within two hours of the last one the same lead', () => {
+    expect(s.reddit.links).toEqual([
+      { at: '2026-10-11 09', url: 'https://drewhoover.com/cfb-streak-king/?t=texas&c=home%2Cunranked&scope=active', crawler: 1, text: 0 },
+      { at: '2026-10-11 08', url: 'https://drewhoover.com/cfb-streak-king/?dir=L&c=ranked', crawler: 0, text: 1 },
+      { at: '2026-10-10 21', url: 'https://drewhoover.com/cfb-streak-king/?t=texas&c=home%2Cunranked&scope=active', crawler: 2, text: 1 },
     ]);
   });
 
@@ -122,13 +166,46 @@ describe('shape', () => {
 });
 
 describe('pathWhere', () => {
-  it('filters a site to its path prefix, and all to nothing', () => {
-    expect(pathWhere('cfb-streak-king')).toBe('"/cfb-streak-king/" in properties["current_url_path"]');
+  it('filters a site to its URL from the host on, and all to nothing', () => {
+    expect(pathWhere('cfb-streak-king')).toBe('"drewhoover.com/cfb-streak-king/" in properties["$current_url"]');
+    expect(pathWhere('blog')).toBe('"drewhoover.com/blog/" in properties["$current_url"]');
+    expect(pathWhere('breathing-index')).toBe('"breathingindex.com/" in properties["$current_url"]');
     expect(pathWhere('all')).toBeUndefined();
+  });
+  it('drops the filter\'s path from a page, and only a whole segment of it', () => {
+    expect(pageName('/cfb-streak-king/', 'cfb-streak-king')).toBe('/');
+    expect(pageName('/cfb-streak-king/games/week/7/', 'cfb-streak-king')).toBe('/games/week/7/');
+    expect(pageName('/hostile-territory/', 'hostile-territory')).toBe('/');
+    expect(pageName('/blog/bfme2-apple-silicon/', 'blog')).toBe('/bfme2-apple-silicon/');
+    expect(pageName('/blogroll/', 'blog')).toBe('/blogroll/');
+    expect(pageName('/intro', 'breathing-index')).toBe('/intro');
+    expect(pageName('/cfb-streak-king/', 'all')).toBe('/cfb-streak-king/');
+    expect(pageName('undefined', 'blog')).toBe('(no path)');
   });
   it('carries the filter on the answer', () => {
     expect(shape(raw(), NOW, 'cfb-streak-king').path).toBe('cfb-streak-king');
     expect(shape(raw(), NOW).path).toBe('all');
+  });
+});
+
+describe('aiName', () => {
+  it('names an assistant by its tag or its domain', () => {
+    expect(aiName('chatgpt.com')).toBe('ChatGPT');
+    expect(aiName('chat.openai.com')).toBe('ChatGPT');
+    expect(aiName('perplexity')).toBe('Perplexity');
+    expect(aiName('www.perplexity.ai')).toBe('Perplexity');
+    expect(aiName('claude.ai')).toBe('Claude');
+    expect(aiName('gemini.google.com')).toBe('Gemini');
+    expect(aiName('copilot.microsoft.com')).toBe('Copilot');
+    expect(aiName('google.com')).toBe('');
+    expect(aiName('undefined')).toBe('');
+  });
+});
+
+describe('redditLink', () => {
+  it('unescapes &amp; and trims what a sentence leaves on the end', () => {
+    expect(redditLink('https://x.test/?a=1&amp;b=2)')).toBe('https://x.test/?a=1&b=2');
+    expect(redditLink('https://x.test/?c=home%2Cleadhalf%3A1),')).toBe('https://x.test/?c=home%2Cleadhalf%3A1');
   });
 });
 

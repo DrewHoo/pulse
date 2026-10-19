@@ -29,3 +29,11 @@ export function addDays(date: string, n: number): string {
 }
 
 export const pad2 = (n: number) => String(n).padStart(2, '0');
+
+// How far the zone's clock runs ahead of UTC at `at`, in ms (EDT: -4h).
+export function offsetMs(tz: string, at: Date = new Date()): number {
+  const n = localNow(tz, at);
+  const [y, m, d] = n.date.split('-').map(Number) as [number, number, number];
+  const local = Date.UTC(y, m - 1, d, n.hour, n.minute);
+  return local - Math.floor(at.getTime() / 60_000) * 60_000;
+}

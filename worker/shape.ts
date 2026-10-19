@@ -26,6 +26,18 @@ export interface Slow {
   pages: Series;              // current_url_path
   pagesUniqueToday: Series;
   shares: Series;             // the share worker's link previews, by the app that fetched them
+  ai: Series;                 // pageviews an AI assistant sent, by utm_source or else $referring_domain (aiOn)
+  aiUniqueToday: Series;
+  reddit: Series;             // Reddit's fetches of a Streak King link, by URL and hour (redditWhere)
+  returning: Returning | null;
+}
+
+// Who came back, from one JQL query over the last RETURNING_DAYS (index.ts);
+// null when it failed, so the rest of the screen still draws.
+export interface Returning {
+  today: number;        // today's visitors seen on an earlier day in the window
+  week: number;         // the last seven days' visitors seen on two or more of those days
+  weekVisitors: number; // the last seven days' visitors
 }
 
 export interface Raw extends Fast, Slow { event: string }
@@ -35,8 +47,17 @@ export interface Row { name: string; today: number; visitors: number; week: numb
 // A link preview is a bot fetching a shared link, so it has no visitors.
 export interface ShareRow { name: string; today: number; week: number }
 
+// A link that may have gone up on Reddit: Reddit's fetches of one URL that
+// fall within REDDIT_GAP_HOURS of each other, read as one post or comment.
+export interface RedditRow {
+  at: string;      // the first fetch's hour, "YYYY-MM-DD HH" in the project timezone
+  url: string;     // the link as posted, &amp; unescaped
+  crawler: number; // redditbot fetches: a link post submitted, or pasted into the submit form
+  text: number;    // &amp;-escaped fetches: the link inside a post's or a comment's text
+}
+
 export interface Stats {
-  v: 3;
+  v: 4;
   path: PathKey;
   fetchedAt: string;
   tz: string;
@@ -48,32 +69,60 @@ export interface Stats {
     todayVisitors: (number | null)[]; yesterdayVisitors: number[];
   };
   days: { date: string; n: number; visitors: number }[];
+  // Visitors lead and views follow. A visitor count doesn't sum across
+  // buckets (one person in two hours is one visitor that day), so the
+  // same-hour comparison with yesterday adds up visitor-hours on both sides,
+  // and the week is the average day's visitors.
   totals: {
-    thisHour: number; thisHourVisitors: number; lastHour: number;
-    today: number; todayVisitors: number;
-    yesterdayToHour: number; yesterday: number; yesterdayVisitors: number;
-    week: number;
+    thisHour: number; thisHourVisitors: number; lastHour: number; lastHourVisitors: number;
+    today: number; todayVisitors: number; todayVisitorHours: number;
+    yesterdayToHour: number; yesterdayVisitorHoursToHour: number; yesterday: number; yesterdayVisitors: number;
+    week: number; weekVisitorsPerDay: number;
   };
   referrers: Row[];
   pages: Row[];
   shares: ShareRow[];
+  ai: Row[];
+  reddit: { views: Row; links: RedditRow[] }; // views: every reddit-referred pageview as one row
+  returning: Returning | null;
 }
 
-// The picker's filters: every view is one site's pages or all of
-// drewhoover.com. An allowlist, not a free path, because each filter is its
+// The picker's filters: every view is one site's pages or everything the
+// project records. An allowlist, not a free path, because each filter is its
 // own set of Query API calls against the hourly budget (see index.ts).
+//
+// A filter matches the page's full URL from its host on (`"x" in` is a
+// substring test, and the query language has no starts-with), so the blog's
+// /blog/ doesn't catch Streak King's /cfb-streak-king/blog/, Breathing Index's
+// own domain doesn't mix its / and /about with drewhoover.com's, and a dev
+// server's localhost pageviews stay out. `strip` comes off the front of the
+// Pages list's paths, where it would say the filter again on every row.
 export const PATHS = [
-  { key: 'cfb-streak-king', label: 'streak king', prefix: '/cfb-streak-king/' },
-  { key: 'all', label: 'all', prefix: null },
+  { key: 'cfb-streak-king', label: 'streak king', url: 'drewhoover.com/cfb-streak-king/', strip: '/cfb-streak-king' },
+  { key: 'hostile-territory', label: 'hostile territory', url: 'drewhoover.com/hostile-territory/', strip: '/hostile-territory' },
+  { key: 'breathing-index', label: 'breathing index', url: 'breathingindex.com/', strip: '' },
+  { key: 'blog', label: 'blog', url: 'drewhoover.com/blog/', strip: '/blog' },
+  { key: 'all', label: 'all', url: null, strip: '' },
 ] as const;
 export type PathKey = (typeof PATHS)[number]['key'];
 export const DEFAULT_PATH: PathKey = 'cfb-streak-king';
 export const isPathKey = (k: string | null): k is PathKey => PATHS.some((p) => p.key === k);
 
+// The URL a filter's pageviews contain, or null for all.
+export const pathUrl = (key: PathKey): string | null => PATHS.find((p) => p.key === key)?.url ?? null;
+
 // The Query API's `where` for a filter's pageviews, or none for all.
 export function pathWhere(key: PathKey): string | undefined {
-  const prefix = PATHS.find((p) => p.key === key)?.prefix;
-  return prefix ? `"${prefix}" in properties["current_url_path"]` : undefined;
+  const url = pathUrl(key);
+  return url ? `"${url}" in properties["$current_url"]` : undefined;
+}
+
+// A page under the filter, without the filter's own path: /cfb-streak-king/
+// reads as / and /cfb-streak-king/games/ as /games/.
+export function pageName(name: string, key: PathKey = 'all'): string {
+  if (name === 'undefined') return '(no path)';
+  const strip = PATHS.find((p) => p.key === key)?.strip ?? '';
+  return strip && name.startsWith(`${strip}/`) ? name.slice(strip.length) : name;
 }
 
 export const LIST_ROWS = 12;
@@ -110,13 +159,12 @@ function rows(
 }
 
 const rank = (rows: Row[]) => rows
-  .sort((a, b) => b.today - a.today || b.week - a.week || a.name.localeCompare(b.name))
+  .sort((a, b) => b.visitors - a.visitors || b.today - a.today || b.week - a.week || a.name.localeCompare(b.name))
   .slice(0, LIST_ROWS);
 
 // An event without the property lands in Mixpanel's "undefined" segment. For
 // referrers that is a visit with no document.referrer, so it reads as direct.
 const domainName = (name: string) => (name === 'undefined' ? '(direct)' : name.replace(/^www\./, ''));
-const pageName = (name: string) => (name === 'undefined' ? '(no path)' : name);
 
 // A full outside referrer, as a readable name: no scheme, no www., no
 // trailing slash, the path kept so a thread reads as a thread.
@@ -138,6 +186,91 @@ const SHARE_APPS: Record<string, string> = {
   imessage: 'iMessage', discord: 'Discord', slack: 'Slack', whatsapp: 'WhatsApp', telegram: 'Telegram',
   facebook: 'Facebook', twitter: 'X', reddit: 'Reddit', linkedin: 'LinkedIn', bluesky: 'Bluesky', mastodon: 'Mastodon',
 };
+
+// AI assistants. ChatGPT and Perplexity send no referrer and tag the link
+// instead (utm_source=chatgpt.com, utm_source=perplexity), and the tag rides
+// along on the pageviews after the landing, so they read as internal; others
+// send a referrer. One segment per pageview: the tag if there is one, else
+// the referring domain (aiOn), so a visit carrying both counts once.
+const AI_SOURCES: [RegExp, string][] = [
+  [/^(chatgpt(\.com)?|chat\.openai\.com|openai)$/, 'ChatGPT'],
+  [/^(www\.)?perplexity(\.ai)?$/, 'Perplexity'],
+  [/^claude(\.ai)?$|^anthropic$/, 'Claude'],
+  [/^(gemini(\.google\.com)?|bard\.google\.com)$/, 'Gemini'],
+  [/^(copilot(\.com|\.microsoft\.com)?)$/, 'Copilot'],
+  [/^(grok(\.com)?|x\.ai)$/, 'Grok'],
+  [/^(chat\.)?deepseek(\.com)?$/, 'DeepSeek'],
+  [/^(www\.)?meta\.ai$/, 'Meta AI'],
+  [/^(chat\.)?mistral(\.ai)?$/, 'Le Chat'],
+  [/^(www\.)?you\.com$/, 'You.com'],
+  [/^(www\.)?phind(\.com)?$/, 'Phind'],
+];
+export const AI_DOMAINS = [
+  'chatgpt.com', 'chat.openai.com', 'perplexity.ai', 'www.perplexity.ai', 'claude.ai', 'gemini.google.com',
+  'copilot.microsoft.com', 'copilot.com', 'grok.com', 'chat.deepseek.com', 'www.meta.ai', 'chat.mistral.ai',
+  'you.com', 'www.phind.com',
+];
+export const aiOn = 'if(defined(properties["utm_source"]), properties["utm_source"], properties["$referring_domain"])';
+export const aiWhere =
+  `defined(properties["utm_source"]) or properties["$referring_domain"] in ${JSON.stringify(AI_DOMAINS)}`;
+export const aiName = (segment: string): string =>
+  AI_SOURCES.find(([re]) => re.test(segment.toLowerCase()))?.[1] ?? '';
+
+// Reddit leaves two marks on the share worker's fetches (see the cfb-streak-king
+// memory notes): its own crawler (agent reddit) fetches a link post's URL on
+// submit, and often minutes earlier when the URL is pasted into the form, so a
+// fetch with no post can be a draft; and a URL in a post's or comment's text is
+// fetched HTML-escaped, `&amp;` for `&`, by an unnamed bot. A comment can also
+// draw no fetch at all, so the list is leads to look up, not a count of posts.
+// Only board URLs the worker rewords report a fetch; a prerendered page doesn't.
+export const redditWhere =
+  'properties["agent"] == "reddit" or (properties["agent"] == "other-bot" and "&amp;" in properties["url"])';
+export const REDDIT_GAP_HOURS = 2;
+
+// The link as written: &amp; unescaped, and the punctuation a markdown link
+// or a sentence leaves stuck to its end trimmed.
+export function redditLink(url: string): string {
+  return url.replace(/&amp;/g, '&').replace(/[),.]+$/, '');
+}
+
+function redditRows(fetches: Series): RedditRow[] {
+  const byUrl = new Map<string, { hour: string; crawler: number; text: number }[]>();
+  for (const [url, byHour] of Object.entries(fetches.data.values)) {
+    if (url === 'undefined') continue;
+    const link = redditLink(url);
+    const escaped = url.includes('&amp;');
+    const hours = byUrl.get(link) ?? [];
+    for (const [hour, n] of Object.entries(byHour)) {
+      if (n > 0) hours.push({ hour, crawler: escaped ? 0 : n, text: escaped ? n : 0 });
+    }
+    byUrl.set(link, hours);
+  }
+  const at = (label: string) => Date.parse(`${label.slice(0, 13).replace(' ', 'T')}:00:00Z`);
+  const out: RedditRow[] = [];
+  for (const [url, hours] of byUrl) {
+    hours.sort((a, b) => a.hour.localeCompare(b.hour));
+    let row: RedditRow | null = null;
+    let last = 0;
+    for (const h of hours) {
+      const t = at(h.hour);
+      if (!row || t - last > REDDIT_GAP_HOURS * 3600_000) {
+        row = { at: h.hour.slice(0, 13), url, crawler: 0, text: 0 };
+        out.push(row);
+      }
+      row.crawler += h.crawler;
+      row.text += h.text;
+      last = t;
+    }
+  }
+  return out.sort((a, b) => b.at.localeCompare(a.at) || a.url.localeCompare(b.url)).slice(0, LIST_ROWS);
+}
+
+// Every reddit-referred pageview as one row: www., old., out., the app.
+function redditViews(domains: Series, uniqueToday: Series, today: string): Row {
+  const reddit = (name: string) => (/(^|\.)reddit\.com$|^com\.reddit\./.test(name) ? 'reddit' : '');
+  const [row] = rows(domains, uniqueToday, today, reddit, (n) => n === 'reddit');
+  return row ?? { name: 'reddit', today: 0, visitors: 0, week: 0 };
+}
 
 function shareRows(views: Series, today: string): ShareRow[] {
   const out: ShareRow[] = [];
@@ -174,7 +307,7 @@ export function shape(raw: Raw, now: LocalNow, path: PathKey = 'all', fetchedAt:
   ]);
 
   return {
-    v: 3,
+    v: 4,
     path,
     fetchedAt: fetchedAt.toISOString(),
     tz: now.tz,
@@ -187,15 +320,22 @@ export function shape(raw: Raw, now: LocalNow, path: PathKey = 'all', fetchedAt:
       thisHour: todayAll[now.hour] ?? 0,
       thisHourVisitors: todayVisitorsAll[now.hour] ?? 0,
       lastHour: now.hour > 0 ? (todayAll[now.hour - 1] ?? 0) : (yesterday[23] ?? 0),
+      lastHourVisitors: now.hour > 0 ? (todayVisitorsAll[now.hour - 1] ?? 0) : (yesterdayVisitors[23] ?? 0),
       today: sum(today),
       todayVisitors: dayOf(now.date)?.visitors ?? 0,
+      todayVisitorHours: sum(todayVisitorsAll.slice(0, now.hour + 1)),
       yesterdayToHour: sum(yesterday.slice(0, now.hour + 1)),
+      yesterdayVisitorHoursToHour: sum(yesterdayVisitors.slice(0, now.hour + 1)),
       yesterday: sum(yesterday),
       yesterdayVisitors: dayOf(yesterdayDate)?.visitors ?? 0,
       week: days.reduce((a, d) => a + d.n, 0),
+      weekVisitorsPerDay: Math.round(days.reduce((a, d) => a + d.visitors, 0) / Math.max(1, days.length)),
     },
     referrers,
-    pages: rank(rows(raw.pages, raw.pagesUniqueToday, now.date, pageName)),
+    pages: rank(rows(raw.pages, raw.pagesUniqueToday, now.date, (n) => pageName(n, path))),
     shares: shareRows(raw.shares, now.date),
+    ai: rank(rows(raw.ai, raw.aiUniqueToday, now.date, aiName, (n) => n !== '')),
+    reddit: { views: redditViews(raw.domains, raw.domainsUniqueToday, now.date), links: redditRows(raw.reddit) },
+    returning: raw.returning ?? null,
   };
 }

@@ -1,13 +1,23 @@
 # pulse
 
-One screen of drewhoover.com's pageviews: this hour, today against yesterday
-at the same hour, the last seven days, the top referrers and pages, and the
-apps Streak King links were shared in (the share worker's link previews, whose
-clicks arrive with no referrer and read as direct).
-A picker under the header switches the whole screen between Streak King's
-pages (`/cfb-streak-king/`, the default) and all of drewhoover.com; the
-choice rides in the URL as `?p=all`. Each filter is its own set of Query API
-calls, so the filters are an allowlist (`PATHS` in `worker/shape.ts`). It is
+One screen of drewhoover.com's visitors, with their pageviews beside them:
+this hour, today against yesterday at the same hour, the last seven days, how
+many came back (today's visitors seen on an earlier day in the last 30, and
+the week's visitors seen on two or more of its days, from one JQL query, since
+the segmentation endpoints count visitors a bucket at a time), the top
+referrers and pages, the apps Streak King links were shared in (the share
+worker's link previews, whose clicks arrive with no referrer and read as
+direct), the pageviews AI assistants sent (by `utm_source`, which ChatGPT and
+Perplexity add in place of a referrer, else by the referring domain), and
+Reddit: its referred views, and the Streak King links Reddit fetched this
+week, each a lead to look up there (Reddit's crawler fetching a link post's
+URL, or an `&amp;`-escaped fetch of a link in a post's or comment's text).
+A picker under the header switches the whole screen between sites: Streak
+King (the default), Hostile Territory, Breathing Index (its own domain), the
+blog, and everything; the choice rides in the URL as `?p=<key>`. A filter
+matches the page URL from its host on, and the Pages list drops the filter's
+own path. Each filter is its own set of Query API calls, so the filters are an
+allowlist (`PATHS` in `worker/shape.ts`). It is
 a static page on GitHub Pages at `https://drewhoover.com/pulse/` that reads a
 Cloudflare Worker at `https://drewhoover.com/pulse/api/stats`; the worker holds
 the Mixpanel service account and caches each answer for five minutes.

@@ -46,24 +46,28 @@ describe('the path filter', () => {
     expect(res.status).toBe(200);
     expect((await res.json() as { path: string }).path).toBe('cfb-streak-king');
     const pageviews = calls.filter((u) => u.searchParams.get('event')?.includes('$mp_web_page_view'));
-    expect(pageviews).toHaveLength(10);
+    expect(pageviews).toHaveLength(12);
     for (const u of pageviews) {
       expect(u.pathname).toBe('/api/query/segmentation');
-      expect(u.searchParams.get('where')).toContain('"/cfb-streak-king/" in properties["current_url_path"]');
+      expect(u.searchParams.get('where')).toContain('"drewhoover.com/cfb-streak-king/" in properties["$current_url"]');
     }
   });
 
-  it('leaves the link previews unfiltered', async () => {
+  it('leaves the link previews unfiltered by path', async () => {
     await stats('?path=cfb-streak-king');
-    const shares = calls.filter((u) => u.searchParams.get('event') === 'share unfurl');
-    expect(shares).toHaveLength(1);
-    expect(shares[0]!.searchParams.has('where')).toBe(false);
+    const unfurls = calls.filter((u) => u.searchParams.get('event') === 'share unfurl');
+    expect(unfurls).toHaveLength(2);
+    const [shares, reddit] = unfurls;
+    expect(shares!.searchParams.has('where')).toBe(false);
+    expect(reddit!.searchParams.get('where')).not.toContain('$current_url');
+    expect(reddit!.searchParams.get('unit')).toBe('hour');
   });
 
   it('reads all of the site with no filter, totals from /events', async () => {
     const res = await stats('?path=all');
     expect((await res.json() as { path: string }).path).toBe('all');
-    expect(calls.some((u) => u.searchParams.has('where') && !u.searchParams.get('where')!.startsWith('defined('))).toBe(false);
+    const pageviews = calls.filter((u) => u.searchParams.get('event') === '$mp_web_page_view');
+    expect(pageviews.some((u) => u.searchParams.get('where')?.includes('$current_url'))).toBe(false);
     expect(calls.filter((u) => u.pathname === '/api/query/events')).toHaveLength(4);
   });
 
@@ -74,6 +78,12 @@ describe('the path filter', () => {
     expect(calls.length).toBe(first);
     await stats('?path=cfb-streak-king');
     expect(calls.length).toBe(first * 2);
+  });
+
+  it('asks JQL who came back, once a refresh, and draws without it when it fails', async () => {
+    const res = await stats('?path=blog');
+    expect(calls.filter((u) => u.pathname === '/api/query/jql')).toHaveLength(1);
+    expect((await res.json() as { returning: unknown }).returning).toBeNull(); // the stand-in answers a series, not a list
   });
 
   it('refuses a filter that is not on the list', async () => {

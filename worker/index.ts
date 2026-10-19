@@ -7,9 +7,9 @@
 //   GET /pulse/api/health  no auth, whether the secrets are set
 //
 // Mixpanel allows 60 Query API calls an hour per project. A full refresh is
-// eleven calls, so the raw answers sit in the edge cache in two groups: the
-// hourly series (2 calls) for FAST_SECONDS and everything else (9 calls) for
-// SLOW_SECONDS. Polled without pause that is 24 + 27 calls an hour, and every
+// fifteen calls, so the raw answers sit in the edge cache in two groups: the
+// hourly series (2 calls) for FAST_SECONDS and everything else (13 calls) for
+// SLOW_SECONDS. Polled without pause that is 24 + 26 calls an hour, and every
 // client, page or widget, reads the same copies. Each path filter
 // (?path=, shape.ts PATHS) is its own pair of groups, so one filter polled
 // all hour fits the budget and two polled at once do not: the page polls only
@@ -18,9 +18,9 @@
 //   GET /pulse/api/stats?path=cfb-streak-king|all   (default cfb-streak-king)
 
 import {
-  DEFAULT_PATH, INTERNAL, isPathKey, pathWhere, shape, type Fast, type PathKey, type Raw, type Series, type Slow,
+  aiOn, aiWhere, DEFAULT_PATH, INTERNAL, redditWhere, isPathKey, pathUrl, pathWhere, shape, type Returning, type Fast, type PathKey, type Raw, type Series, type Slow,
 } from './shape';
-import { addDays, localNow, type LocalNow } from './time';
+import { addDays, localNow, offsetMs, type LocalNow } from './time';
 
 export interface Env {
   MIXPANEL_SERVICE_ACCOUNT?: string; // secret: "<username>:<secret>" of a Mixpanel service account
@@ -33,8 +33,8 @@ export interface Env {
 }
 
 const FAST_SECONDS = 300;
-const SLOW_SECONDS = 1200;
-const RAW_VERSION = 3; // bump with any change to what is fetched, so a stale cached group is skipped
+const SLOW_SECONDS = 1800;
+const RAW_VERSION = 5; // bump with any change to what is fetched, so a stale cached group is skipped
 
 const JSON_TYPE = 'application/json; charset=utf-8';
 
@@ -103,18 +103,79 @@ async function fetchFast(c: Client, today: string, where?: string): Promise<Fast
   return { hours, hoursUnique };
 }
 
-async function fetchSlow(c: Client, today: string, path?: string): Promise<Slow> {
+// Who came back. The segmentation endpoints count visitors one bucket at a
+// time, and the retention endpoint's cohorts aren't first visits, so a
+// visitor's days come from JQL: every pageview in the window, grouped by
+// person into the set of project-local days they were on, reduced to three
+// counts. A failure is null, not an error, so the screen still draws.
+const RETURNING_DAYS = 30;
+const RETURNING_JQL = `function main() {
+  return Events({ from_date: params.from, to_date: params.to, event_selectors: [{ event: params.event }] })
+    .filter(function (e) { return !params.url || String(e.properties.$current_url || '').indexOf(params.url) >= 0; })
+    .groupByUser(function (days, events) {
+      days = days || {};
+      for (var i = 0; i < events.length; i++) days[new Date(events[i].time + params.offset).toISOString().slice(0, 10)] = 1;
+      return days;
+    })
+    .reduce(function (accs, users) {
+      var out = { today: 0, week: 0, weekVisitors: 0 };
+      for (var a = 0; a < accs.length; a++) {
+        out.today += accs[a].today; out.week += accs[a].week; out.weekVisitors += accs[a].weekVisitors;
+      }
+      for (var u = 0; u < users.length; u++) {
+        var days = Object.keys(users[u].value), onToday = false, before = false, inWeek = 0;
+        for (var d = 0; d < days.length; d++) {
+          if (days[d] === params.to) onToday = true; else before = true;
+          if (days[d] >= params.weekStart) inWeek++;
+        }
+        if (onToday && before) out.today++;
+        if (inWeek > 0) out.weekVisitors++;
+        if (inWeek > 1) out.week++;
+      }
+      return out;
+    });
+}`;
+
+async function fetchReturning({ env, run }: Client, today: string, url: string | null): Promise<Returning | null> {
+  const body = new URLSearchParams({
+    project_id: env.MIXPANEL_PROJECT_ID,
+    script: RETURNING_JQL,
+    params: JSON.stringify({
+      from: addDays(today, -(RETURNING_DAYS - 1)), to: today, weekStart: addDays(today, -6),
+      event: env.PAGEVIEW_EVENT, url, offset: offsetMs(env.MIXPANEL_TZ),
+    }),
+  });
+  try {
+    const res = await run(() => fetch(`${env.MIXPANEL_API}/api/query/jql`, {
+      method: 'POST',
+      headers: { authorization: `Basic ${btoa(env.MIXPANEL_SERVICE_ACCOUNT!)}`, accept: 'application/json' },
+      body,
+    }));
+    if (!res.ok) return null;
+    const answer = await res.json<unknown>();
+    if (!Array.isArray(answer)) return null;
+    const out = answer[0] as Returning | undefined; // no pageviews in the window: an empty list
+    return out && typeof out.today === 'number' ? out : { today: 0, week: 0, weekVisitors: 0 };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchSlow(c: Client, today: string, path?: string, url: string | null = null): Promise<Slow> {
   const event = c.env.PAGEVIEW_EVENT;
   const weekStart = addDays(today, -6);
   const events = (type: string) => totals(c, type, 'day', weekStart, today, path);
-  const segmentation = (on: string, type: string, from_date: string, where = path, ev = event) =>
+  const segmentation = (on: string, type: string, from_date: string, where = path, ev = event, unit = 'day') =>
     query(c, 'segmentation', {
-      event: ev, type, on, from_date, to_date: today, unit: 'day', limit: '60', ...(where ? { where } : {}),
+      event: ev, type, on, from_date, to_date: today, unit, limit: '60', ...(where ? { where } : {}),
     });
   const both = (a: string | undefined, b: string) => (a ? `(${a}) and (${b})` : b);
   const outside = both(path, `defined(properties["$referrer"]) and properties["$referring_domain"] != "${INTERNAL}"`);
-  const [days, daysUnique, domains, domainsUniqueToday, urls, urlsUniqueToday, pages, pagesUniqueToday, shares] =
-    await Promise.all([
+  const ai = both(path, aiWhere);
+  const [
+    days, daysUnique, domains, domainsUniqueToday, urls, urlsUniqueToday, pages, pagesUniqueToday, shares,
+    aiViews, aiUniqueToday, reddit, returning,
+  ] = await Promise.all([
       events('general'),
       events('unique'),
       segmentation('properties["$referring_domain"]', 'general', weekStart),
@@ -124,8 +185,15 @@ async function fetchSlow(c: Client, today: string, path?: string): Promise<Slow>
       segmentation('properties["current_url_path"]', 'general', weekStart),
       segmentation('properties["current_url_path"]', 'unique', today),
       segmentation('properties["agent"]', 'general', weekStart, '', c.env.UNFURL_EVENT), // no path: a preview isn't a pageview
+      segmentation(aiOn, 'general', weekStart, ai),
+      segmentation(aiOn, 'unique', today, ai),
+      segmentation('properties["url"]', 'general', weekStart, redditWhere, c.env.UNFURL_EVENT, 'hour'),
+      fetchReturning(c, today, url),
     ]);
-  return { days, daysUnique, domains, domainsUniqueToday, urls, urlsUniqueToday, pages, pagesUniqueToday, shares };
+  return {
+    days, daysUnique, domains, domainsUniqueToday, urls, urlsUniqueToday, pages, pagesUniqueToday, shares,
+    ai: aiViews, aiUniqueToday, reddit, returning,
+  };
 }
 
 // A raw group from the edge cache, or fetched and stored for `ttl`. The key
@@ -171,7 +239,7 @@ export default {
     try {
       const [fast, slow] = await Promise.all([
         cachedGroup(ctx, `fast-${pathKey}`, now, FAST_SECONDS, () => fetchFast(client, now.date, where)),
-        cachedGroup(ctx, `slow-${pathKey}`, now, SLOW_SECONDS, () => fetchSlow(client, now.date, where)),
+        cachedGroup(ctx, `slow-${pathKey}`, now, SLOW_SECONDS, () => fetchSlow(client, now.date, where, pathUrl(pathKey))),
       ]);
       raw = { event: env.PAGEVIEW_EVENT, ...fast.value, ...slow.value };
       cache = `fast=${fast.hit ? 'hit' : 'miss'} slow=${slow.hit ? 'hit' : 'miss'}`;

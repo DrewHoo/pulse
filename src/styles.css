@@ -40,7 +40,7 @@ h1, h2 { margin: 0; font-weight: 600; }
 .top h1 { font-size: 14px; letter-spacing: 0.01em; }
 .asof { color: var(--mute); font-size: 12px; }
 
-.paths { display: flex; gap: 4px; margin: 0 0 8px; }
+.paths { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px; }
 .paths button {
   font: inherit; font-size: 12px; color: var(--mute); background: var(--dim);
   border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer;
@@ -57,6 +57,8 @@ h1, h2 { margin: 0; font-weight: 600; }
 .stat b { font: 600 22px/1 var(--num); letter-spacing: -0.02em; }
 .stat span { color: var(--mute); font-size: 11px; margin-top: 3px; white-space: nowrap; }
 .stat em { font-style: normal; opacity: 0.7; }
+/* visitors lead, views follow on their own line, so a long caption never runs into the next stat */
+.hero .stat em, .strip .stat em { display: block; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; }
 .stat .up { color: var(--up); }
 .stat .down { color: var(--down); }
 
@@ -89,7 +91,8 @@ h1, h2 { margin: 0; font-weight: 600; }
 .day span { color: var(--mute); font-size: 10px; margin-top: 3px; }
 
 .lists { display: grid; gap: 10px; }
-.list header, .row { display: grid; grid-template-columns: 1fr 40px 34px 44px; gap: 6px; align-items: baseline; }
+.list header, .row { display: grid; grid-template-columns: 1fr 34px 42px 52px; gap: 6px; align-items: baseline; }
+.list header span { white-space: nowrap; }
 .list header { padding: 0 2px 4px; border-bottom: 1px solid var(--line); color: var(--mute); font-size: 11px; }
 .list h2 { font-size: 12px; color: var(--fg); }
 .row { position: relative; padding: 3px 2px; font-size: 13px; }
@@ -99,8 +102,14 @@ h1, h2 { margin: 0; font-weight: 600; }
 .row .n { font-family: var(--num); font-weight: 600; }
 .row .v { color: var(--mute); font-size: 12px; }
 .row .w { color: var(--mute); }
+.list h3 { margin: 6px 2px 0; font-size: 11px; font-weight: 500; color: var(--mute); }
+.row.lead { grid-template-columns: 1fr auto 44px; }
+.row.lead a { color: inherit; text-decoration: none; }
+.row.lead .k { color: var(--accent); font-size: 11px; white-space: nowrap; }
+.row.lead .w { text-align: right; white-space: nowrap; font-size: 12px; }
 .empty { color: var(--mute); font-size: 12px; padding: 6px 2px; }
 .foot { margin: 4px 2px 0; color: var(--mute); font-size: 11px; }
+.foot.recur { margin: 0 0 10px; }
 
 .message { padding: 24px 0; color: var(--mute); }
 .message h2 { color: var(--fg); font-size: 16px; margin-bottom: 6px; }
