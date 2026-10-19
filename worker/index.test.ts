@@ -15,10 +15,13 @@ const env: Env = {
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 
 let calls: URL[] = [];
+let status = 200;
+let store = new Map<string, Response>();
 
 beforeEach(() => {
   calls = [];
-  const store = new Map<string, Response>();
+  status = 200;
+  store = new Map<string, Response>();
   vi.stubGlobal('caches', {
     default: {
       match: async (req: Request) => store.get(req.url)?.clone(),
@@ -27,6 +30,7 @@ beforeEach(() => {
   });
   vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
     calls.push(new URL(String(input)));
+    if (status !== 200) return new Response('{"error": "Query rate limit exceeded"}', { status });
     return new Response(JSON.stringify({ data: { series: [], values: {} } }), { status: 200 });
   });
   // Node has no timingSafeEqual; the worker only ever passes it encoded strings
@@ -90,5 +94,39 @@ describe('the path filter', () => {
     const res = await stats('?path=/etc/');
     expect(res.status).toBe(400);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('a refused refresh', () => {
+  const expire = () => { for (const k of [...store.keys()]) if (!/\/(last-|backoff)/.test(k)) store.delete(k); };
+
+  it('stops asking at the first 429, and asks nothing until the backoff ends', async () => {
+    status = 429;
+    const res = await stats();
+    expect(res.status).toBe(503);
+    expect((await res.json() as { retryAfter?: string }).retryAfter).toBeTruthy();
+    expect(calls.length).toBeLessThan(15); // the calls queued behind the first refusal never go out
+    const sent = calls.length;
+    expect((await stats()).status).toBe(503);
+    expect(calls.length).toBe(sent);
+  });
+
+  it('serves the last good copy, saying when it was fetched', async () => {
+    expect((await stats()).status).toBe(200);
+    expire(); // the fresh copies age out
+    status = 429;
+    const res = await stats();
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-pulse-cache')).toBe('fast=stale slow=stale');
+    expect((await res.json() as { staleSince: string | null }).staleSince).toMatch(/^\d{4}-/);
+    const sent = calls.length;
+    expect((await stats()).status).toBe(200);
+    expect(calls.length).toBe(sent); // inside the backoff, from the kept copy without asking
+  });
+
+  it('says nothing is stale on a fresh answer', async () => {
+    const res = await stats();
+    expect((await res.json() as { staleSince: string | null }).staleSince).toBeNull();
+    expect(res.headers.get('x-pulse-cache')).toBe('fast=miss slow=miss');
   });
 });

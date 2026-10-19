@@ -85,6 +85,7 @@ export interface Stats {
   ai: Row[];
   reddit: { views: Row; links: RedditRow[] }; // views: every reddit-referred pageview as one row
   returning: Returning | null;
+  staleSince?: string | null; // set by index.ts when a group is the last good copy, the oldest one's fetch time
 }
 
 // The picker's filters: every view is one site's pages or everything the

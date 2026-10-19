@@ -71,16 +71,35 @@ function pool(size: number): Run {
   };
 }
 
-interface Client { env: Env; run: Run }
+// `limited` flips at the first 429 of a refresh, and the calls still queued
+// in the pool then fail without asking: Mixpanel seems to count a refused
+// call against the hour too, so firing the rest would only keep it shut.
+interface Client { env: Env; run: Run; limited: boolean }
 
-async function query({ env, run }: Client, path: string, params: Record<string, string>): Promise<Series> {
+export class MixpanelError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
+const RATE_LIMITED = 429;
+
+async function call(c: Client, path: string, init: () => Promise<Response>): Promise<Response> {
+  const res = await c.run(async () => {
+    if (c.limited) throw new MixpanelError(RATE_LIMITED, `mixpanel ${path}: skipped after a 429`);
+    return init();
+  });
+  if (res.status === RATE_LIMITED) c.limited = true;
+  return res;
+}
+
+async function query(c: Client, path: string, params: Record<string, string>): Promise<Series> {
+  const { env } = c;
   const url = new URL(`${env.MIXPANEL_API}/api/query/${path}`);
   url.searchParams.set('project_id', env.MIXPANEL_PROJECT_ID);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const res = await run(() => fetch(url, {
+  const res = await call(c, path, () => fetch(url, {
     headers: { authorization: `Basic ${btoa(env.MIXPANEL_SERVICE_ACCOUNT!)}`, accept: 'application/json' },
   }));
-  if (!res.ok) throw new Error(`mixpanel ${path} ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) throw new MixpanelError(res.status, `mixpanel ${path} ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return res.json();
 }
 
@@ -136,7 +155,8 @@ const RETURNING_JQL = `function main() {
     });
 }`;
 
-async function fetchReturning({ env, run }: Client, today: string, url: string | null): Promise<Returning | null> {
+async function fetchReturning(c: Client, today: string, url: string | null): Promise<Returning | null> {
+  const { env } = c;
   const body = new URLSearchParams({
     project_id: env.MIXPANEL_PROJECT_ID,
     script: RETURNING_JQL,
@@ -146,7 +166,7 @@ async function fetchReturning({ env, run }: Client, today: string, url: string |
     }),
   });
   try {
-    const res = await run(() => fetch(`${env.MIXPANEL_API}/api/query/jql`, {
+    const res = await call(c, 'jql', () => fetch(`${env.MIXPANEL_API}/api/query/jql`, {
       method: 'POST',
       headers: { authorization: `Basic ${btoa(env.MIXPANEL_SERVICE_ACCOUNT!)}`, accept: 'application/json' },
       body,
@@ -199,17 +219,64 @@ async function fetchSlow(c: Client, today: string, path?: string, url: string | 
 // A raw group from the edge cache, or fetched and stored for `ttl`. The key
 // carries the project-local date so a group from before midnight is not read
 // as today's.
+//
+// Each fetched group is also kept as the day's last good copy. When a fetch
+// fails, or Mixpanel answered 429 within BACKOFF_SECONDS (a marker for the
+// whole project, since the limit is the project's), the last good copy is
+// served with the time it was fetched, and a 429 sends no call at all until
+// the marker expires: an open page polling every five minutes would
+// otherwise spend every refresh on refusals.
+const BACKOFF_SECONDS = 600;
+
+interface Kept<T> { at: string; value: T }
+type Group<T> = { value: T; hit: boolean; staleSince: string | null };
+
+const cacheKey = (name: string, date?: string) =>
+  new Request(`https://pulse-cache.invalid/${name}?v=${RAW_VERSION}${date ? `&d=${date}` : ''}`);
+const stored = (body: unknown, ttl: number) => new Response(JSON.stringify(body), {
+  headers: { 'content-type': JSON_TYPE, 'cache-control': `public, max-age=${ttl}` },
+});
+
+export class RateLimited extends Error {
+  constructor(readonly until: string) { super(`Mixpanel's hourly query limit is used up; trying again after ${until}`); }
+}
+
 async function cachedGroup<T>(
   ctx: ExecutionContext, name: string, now: LocalNow, ttl: number, load: () => Promise<T>,
-): Promise<{ value: T; hit: boolean }> {
-  const key = new Request(`https://pulse-cache.invalid/${name}?v=${RAW_VERSION}&d=${now.date}`);
-  const hit = await caches.default.match(key);
-  if (hit) return { value: await hit.json<T>(), hit: true };
-  const value = await load();
-  ctx.waitUntil(caches.default.put(key, new Response(JSON.stringify(value), {
-    headers: { 'content-type': JSON_TYPE, 'cache-control': `public, max-age=${ttl}` },
-  })));
-  return { value, hit: false };
+): Promise<Group<T>> {
+  const fresh = cacheKey(name, now.date);
+  const keep = cacheKey(`last-${name}`, now.date);
+  const backoff = cacheKey('backoff');
+  const hit = await caches.default.match(fresh);
+  if (hit) return { value: await hit.json<T>(), hit: true, staleSince: null };
+
+  const lastGood = async () => {
+    const kept = await caches.default.match(keep);
+    return kept ? await kept.json<Kept<T>>() : null;
+  };
+  const marker = await caches.default.match(backoff);
+  if (marker) {
+    const { until } = await marker.json<{ until: string }>();
+    const last = await lastGood();
+    if (last) return { value: last.value, hit: true, staleSince: last.at };
+    throw new RateLimited(until);
+  }
+
+  try {
+    const value = await load();
+    ctx.waitUntil(Promise.all([
+      caches.default.put(fresh, stored(value, ttl)),
+      caches.default.put(keep, stored({ at: new Date().toISOString(), value } satisfies Kept<T>, 86_400)),
+    ]));
+    return { value, hit: false, staleSince: null };
+  } catch (e) {
+    const limited = e instanceof MixpanelError && e.status === RATE_LIMITED;
+    const until = new Date(Date.now() + BACKOFF_SECONDS * 1000).toISOString();
+    if (limited) ctx.waitUntil(caches.default.put(backoff, stored({ until }, BACKOFF_SECONDS)));
+    const last = await lastGood();
+    if (last) return { value: last.value, hit: false, staleSince: last.at };
+    throw limited ? new RateLimited(until) : e;
+  }
 }
 
 export default {
@@ -233,19 +300,23 @@ export default {
     const where = pathWhere(pathKey);
 
     const now = localNow(env.MIXPANEL_TZ);
-    const client: Client = { env, run: pool(4) };
+    const client: Client = { env, run: pool(4), limited: false };
     let raw: Raw;
     let cache: string;
+    let staleSince: string | null;
     try {
       const [fast, slow] = await Promise.all([
         cachedGroup(ctx, `fast-${pathKey}`, now, FAST_SECONDS, () => fetchFast(client, now.date, where)),
         cachedGroup(ctx, `slow-${pathKey}`, now, SLOW_SECONDS, () => fetchSlow(client, now.date, where, pathUrl(pathKey))),
       ]);
       raw = { event: env.PAGEVIEW_EVENT, ...fast.value, ...slow.value };
-      cache = `fast=${fast.hit ? 'hit' : 'miss'} slow=${slow.hit ? 'hit' : 'miss'}`;
+      const state = (g: Group<unknown>) => (g.staleSince ? 'stale' : g.hit ? 'hit' : 'miss');
+      cache = `fast=${state(fast)} slow=${state(slow)}`;
+      staleSince = [fast.staleSince, slow.staleSince].filter((t): t is string => t !== null).sort()[0] ?? null;
     } catch (e) {
+      if (e instanceof RateLimited) return json({ error: e.message, retryAfter: e.until }, 503);
       return json({ error: e instanceof Error ? e.message : String(e) }, 502);
     }
-    return json(shape(raw, now, pathKey), 200, { 'x-pulse-cache': cache });
+    return json({ ...shape(raw, now, pathKey), staleSince }, 200, { 'x-pulse-cache': cache });
   },
 } satisfies ExportedHandler<Env>;

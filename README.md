@@ -20,7 +20,10 @@ own path. Each filter is its own set of Query API calls, so the filters are an
 allowlist (`PATHS` in `worker/shape.ts`). It is
 a static page on GitHub Pages at `https://drewhoover.com/pulse/` that reads a
 Cloudflare Worker at `https://drewhoover.com/pulse/api/stats`; the worker holds
-the Mixpanel service account and caches each answer for five minutes.
+the Mixpanel service account and caches the answers (the hourly series five
+minutes, the rest thirty). Mixpanel allows 60 queries an hour per project; when
+it answers 429 the worker sends nothing for ten minutes and serves the day's
+last good answer meanwhile, which the page notes with its age.
 
 The page is not linked from the index site and carries `noindex`. The data is
 gated by a bearer token the page sends from its `?k=` query. Open the page once

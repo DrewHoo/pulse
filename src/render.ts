@@ -157,6 +157,8 @@ function picker(current: PathKey | undefined): string {
 
 export function render(s: Stats, note = '', path: PathKey = s.path): string {
   const t = s.totals;
+  // the worker served a kept copy because Mixpanel refused or failed
+  if (!note && s.staleSince) note = `Mixpanel didn't answer (likely its hourly limit): numbers from ${ago(s.staleSince)}`;
   const vsYday = pct(t.todayVisitorHours, t.yesterdayVisitorHoursToHour);
   const back = s.returning;
   return `
