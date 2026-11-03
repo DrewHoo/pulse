@@ -12,9 +12,17 @@ Perplexity add in place of a referrer, else by the referring domain), and
 Reddit: its referred views, and the Streak King links Reddit fetched this
 week, each a lead to look up there (Reddit's crawler fetching a link post's
 URL, or an `&amp;`-escaped fetch of a link in a post's or comment's text).
-A picker under the header switches the whole screen between sites: Streak
-King (the default), Hostile Territory, Breathing Index (its own domain), the
-blog, and everything; the choice rides in the URL as `?p=<key>`. A filter
+Every count is real users only, as the Mixpanel project's VisitorType custom
+property sorts them: no bots (Bot Check's rules, plus the headless Mac at
+1440x900 that crawled Putting Up Numbers from 2026-11-03) and none of Drew's
+devices. The Query API can't read a custom property, so `worker/shape.ts`
+writes the rules out (`realWhere`, `REAL_JQL`), and a change to VisitorType
+has to land there too. The link previews are bots' fetches and stay as they
+are.
+A picker under the header switches the whole screen between sites: Putting
+Up Numbers (the default, its own domain, with its pageviews by sport), Streak
+King, Hostile Territory, Breathing Index (its own domain), the blog, and
+everything; the choice rides in the URL as `?p=<key>`. A filter
 matches the page URL from its host on, and the Pages list drops the filter's
 own path. Each filter is its own set of Query API calls, so the filters are an
 allowlist (`PATHS` in `worker/shape.ts`). It is

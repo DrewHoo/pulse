@@ -6,19 +6,25 @@
 //   GET /pulse/api/stats   bearer token (or ?k=), the shaped stats JSON
 //   GET /pulse/api/health  no auth, whether the secrets are set
 //
+// Every pageview call counts real users only (shape.ts, realWhere): no bots
+// and none of Drew's own devices. The link previews stay as they are, since a
+// preview is a bot's fetch by definition.
+//
 // Mixpanel allows 60 Query API calls an hour per project. A full refresh is
-// fifteen calls, so the raw answers sit in the edge cache in two groups: the
-// hourly series (2 calls) for FAST_SECONDS and everything else (13 calls) for
-// SLOW_SECONDS. Polled without pause that is 24 + 26 calls an hour, and every
+// fifteen calls (seventeen for Putting Up Numbers, whose sports are two more),
+// so the raw answers sit in the edge cache in two groups: the hourly series
+// (2 calls) for FAST_SECONDS and everything else for SLOW_SECONDS. Polled
+// without pause that is 24 + 26 calls an hour (24 + 30 for PUN), and every
 // client, page or widget, reads the same copies. Each path filter
 // (?path=, shape.ts PATHS) is its own pair of groups, so one filter polled
 // all hour fits the budget and two polled at once do not: the page polls only
 // the filter it shows.
 //
-//   GET /pulse/api/stats?path=cfb-streak-king|all   (default cfb-streak-king)
+//   GET /pulse/api/stats?path=puttingupnumbers|cfb-streak-king|…|all   (default puttingupnumbers)
 
 import {
-  aiOn, aiWhere, DEFAULT_PATH, INTERNAL, redditWhere, isPathKey, pathUrl, pathWhere, shape, type Returning, type Fast, type PathKey, type Raw, type Series, type Slow,
+  aiOn, aiWhere, BOT_AGENT, BOT_ID, DEFAULT_PATH, DREW_CITY, DREW_DEVICES, INTERNAL, REAL_JQL, realWhere, redditWhere,
+  isPathKey, pathUrl, pathWhere, shape, type Returning, type Fast, type PathKey, type Raw, type Series, type Slow,
 } from './shape';
 import { addDays, localNow, offsetMs, type LocalNow } from './time';
 
@@ -34,7 +40,7 @@ export interface Env {
 
 const FAST_SECONDS = 300;
 const SLOW_SECONDS = 1800;
-const RAW_VERSION = 5; // bump with any change to what is fetched, so a stale cached group is skipped
+const RAW_VERSION = 6; // bump with any change to what is fetched, so a stale cached group is skipped
 
 const JSON_TYPE = 'application/json; charset=utf-8';
 
@@ -103,17 +109,17 @@ async function query(c: Client, path: string, params: Record<string, string>): P
   return res.json();
 }
 
-// Pageview totals by hour or day. /events can't filter, so a filtered view
-// asks /segmentation with no `on`, which answers in the same shape (values
-// keyed by the event name).
-function totals(c: Client, type: string, unit: string, from_date: string, to_date: string, where?: string) {
-  const event = c.env.PAGEVIEW_EVENT;
-  return where
-    ? query(c, 'segmentation', { event, type, unit, from_date, to_date, where })
-    : query(c, 'events', { event: JSON.stringify([event]), type, unit, from_date, to_date });
+// A filter's pageviews, real users only.
+const realOnly = (where?: string) => (where ? `(${where}) and ${realWhere}` : realWhere);
+
+// Pageview totals by hour or day. /events can't filter, so they come from
+// /segmentation with no `on`, which answers in the same shape (values keyed
+// by the event name).
+function totals(c: Client, type: string, unit: string, from_date: string, to_date: string, where: string) {
+  return query(c, 'segmentation', { event: c.env.PAGEVIEW_EVENT, type, unit, from_date, to_date, where });
 }
 
-async function fetchFast(c: Client, today: string, where?: string): Promise<Fast> {
+async function fetchFast(c: Client, today: string, where: string): Promise<Fast> {
   const from_date = addDays(today, -1);
   const [hours, hoursUnique] = await Promise.all([
     totals(c, 'general', 'hour', from_date, today, where),
@@ -126,11 +132,13 @@ async function fetchFast(c: Client, today: string, where?: string): Promise<Fast
 // time, and the retention endpoint's cohorts aren't first visits, so a
 // visitor's days come from JQL: every pageview in the window, grouped by
 // person into the set of project-local days they were on, reduced to three
-// counts. A failure is null, not an error, so the screen still draws.
+// counts, real users only (REAL_JQL). A failure is null, not an error, so the
+// screen still draws.
 const RETURNING_DAYS = 30;
-const RETURNING_JQL = `function main() {
+const RETURNING_JQL = `${REAL_JQL}
+function main() {
   return Events({ from_date: params.from, to_date: params.to, event_selectors: [{ event: params.event }] })
-    .filter(function (e) { return !params.url || String(e.properties.$current_url || '').indexOf(params.url) >= 0; })
+    .filter(function (e) { return real(e) && (!params.url || String(e.properties.$current_url || '').indexOf(params.url) >= 0); })
     .groupByUser(function (days, events) {
       days = days || {};
       for (var i = 0; i < events.length; i++) days[new Date(events[i].time + params.offset).toISOString().slice(0, 10)] = 1;
@@ -163,6 +171,7 @@ async function fetchReturning(c: Client, today: string, url: string | null): Pro
     params: JSON.stringify({
       from: addDays(today, -(RETURNING_DAYS - 1)), to: today, weekStart: addDays(today, -6),
       event: env.PAGEVIEW_EVENT, url, offset: offsetMs(env.MIXPANEL_TZ),
+      drewDevices: DREW_DEVICES, drewCity: DREW_CITY, botId: BOT_ID, botAgent: BOT_AGENT,
     }),
   });
   try {
@@ -181,7 +190,7 @@ async function fetchReturning(c: Client, today: string, url: string | null): Pro
   }
 }
 
-async function fetchSlow(c: Client, today: string, path?: string, url: string | null = null): Promise<Slow> {
+async function fetchSlow(c: Client, today: string, path: string, url: string | null, sports: boolean): Promise<Slow> {
   const event = c.env.PAGEVIEW_EVENT;
   const weekStart = addDays(today, -6);
   const events = (type: string) => totals(c, type, 'day', weekStart, today, path);
@@ -189,12 +198,13 @@ async function fetchSlow(c: Client, today: string, path?: string, url: string | 
     query(c, 'segmentation', {
       event: ev, type, on, from_date, to_date: today, unit, limit: '60', ...(where ? { where } : {}),
     });
-  const both = (a: string | undefined, b: string) => (a ? `(${a}) and (${b})` : b);
-  const outside = both(path, `defined(properties["$referrer"]) and properties["$referring_domain"] != "${INTERNAL}"`);
+  const both = (a: string, b: string) => `(${a}) and (${b})`;
+  const outside = both(path, `defined(properties["$referrer"]) and not (properties["$referring_domain"] in ${JSON.stringify(INTERNAL)})`);
   const ai = both(path, aiWhere);
+  const none = Promise.resolve(undefined);
   const [
     days, daysUnique, domains, domainsUniqueToday, urls, urlsUniqueToday, pages, pagesUniqueToday, shares,
-    aiViews, aiUniqueToday, reddit, returning,
+    aiViews, aiUniqueToday, reddit, returning, sportViews, sportsUniqueToday,
   ] = await Promise.all([
       events('general'),
       events('unique'),
@@ -209,10 +219,13 @@ async function fetchSlow(c: Client, today: string, path?: string, url: string | 
       segmentation(aiOn, 'unique', today, ai),
       segmentation('properties["url"]', 'general', weekStart, redditWhere, c.env.UNFURL_EVENT, 'hour'),
       fetchReturning(c, today, url),
+      sports ? segmentation('properties["sport"]', 'general', weekStart) : none,
+      sports ? segmentation('properties["sport"]', 'unique', today) : none,
     ]);
   return {
     days, daysUnique, domains, domainsUniqueToday, urls, urlsUniqueToday, pages, pagesUniqueToday, shares,
     ai: aiViews, aiUniqueToday, reddit, returning,
+    ...(sportViews && sportsUniqueToday ? { sports: sportViews, sportsUniqueToday } : {}),
   };
 }
 
@@ -297,7 +310,7 @@ export default {
     const asked = url.searchParams.get('path');
     if (asked !== null && !isPathKey(asked)) return json({ error: `unknown path filter: ${asked}` }, 400);
     const pathKey: PathKey = asked ?? DEFAULT_PATH;
-    const where = pathWhere(pathKey);
+    const where = realOnly(pathWhere(pathKey));
 
     const now = localNow(env.MIXPANEL_TZ);
     const client: Client = { env, run: pool(4), limited: false };
@@ -307,7 +320,7 @@ export default {
     try {
       const [fast, slow] = await Promise.all([
         cachedGroup(ctx, `fast-${pathKey}`, now, FAST_SECONDS, () => fetchFast(client, now.date, where)),
-        cachedGroup(ctx, `slow-${pathKey}`, now, SLOW_SECONDS, () => fetchSlow(client, now.date, where, pathUrl(pathKey))),
+        cachedGroup(ctx, `slow-${pathKey}`, now, SLOW_SECONDS, () => fetchSlow(client, now.date, where, pathUrl(pathKey), pathKey === 'puttingupnumbers')),
       ]);
       raw = { event: env.PAGEVIEW_EVENT, ...fast.value, ...slow.value };
       const state = (g: Group<unknown>) => (g.staleSince ? 'stale' : g.hit ? 'hit' : 'miss');

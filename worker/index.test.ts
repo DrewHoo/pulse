@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
+import { realWhere } from './shape';
 
 // The worker against a stand-in Mixpanel: every call is recorded and answered
 // with an empty series, so the test reads which calls a filter makes.
@@ -45,14 +46,25 @@ const stats = (q = '') => worker.fetch(
 );
 
 describe('the path filter', () => {
-  it('defaults to Streak King and filters every pageview call to its path', async () => {
+  it('defaults to Putting Up Numbers, every pageview call its pages and real users, with its sports', async () => {
     const res = await stats();
     expect(res.status).toBe(200);
-    expect((await res.json() as { path: string }).path).toBe('cfb-streak-king');
+    expect((await res.json() as { path: string }).path).toBe('puttingupnumbers');
+    const pageviews = calls.filter((u) => u.searchParams.get('event')?.includes('$mp_web_page_view'));
+    expect(pageviews).toHaveLength(14);
+    for (const u of pageviews) {
+      expect(u.pathname).toBe('/api/query/segmentation');
+      expect(u.searchParams.get('where')).toContain('"puttingupnumbers.com/" in properties["$current_url"]');
+      expect(u.searchParams.get('where')).toContain(realWhere);
+    }
+    expect(pageviews.filter((u) => u.searchParams.get('on') === 'properties["sport"]')).toHaveLength(2);
+  });
+
+  it('filters Streak King to its path, without the sports', async () => {
+    await stats('?path=cfb-streak-king');
     const pageviews = calls.filter((u) => u.searchParams.get('event')?.includes('$mp_web_page_view'));
     expect(pageviews).toHaveLength(12);
     for (const u of pageviews) {
-      expect(u.pathname).toBe('/api/query/segmentation');
       expect(u.searchParams.get('where')).toContain('"drewhoover.com/cfb-streak-king/" in properties["$current_url"]');
     }
   });
@@ -67,12 +79,16 @@ describe('the path filter', () => {
     expect(reddit!.searchParams.get('unit')).toBe('hour');
   });
 
-  it('reads all of the site with no filter, totals from /events', async () => {
+  it('reads all of the site with no path filter, still real users only', async () => {
     const res = await stats('?path=all');
     expect((await res.json() as { path: string }).path).toBe('all');
     const pageviews = calls.filter((u) => u.searchParams.get('event') === '$mp_web_page_view');
-    expect(pageviews.some((u) => u.searchParams.get('where')?.includes('$current_url'))).toBe(false);
-    expect(calls.filter((u) => u.pathname === '/api/query/events')).toHaveLength(4);
+    expect(pageviews).toHaveLength(12);
+    for (const u of pageviews) {
+      expect(u.searchParams.get('where')).not.toContain('" in properties["$current_url"]');
+      expect(u.searchParams.get('where')).toContain(realWhere);
+    }
+    expect(calls.filter((u) => u.pathname === '/api/query/events')).toHaveLength(0);
   });
 
   it('caches each filter apart', async () => {

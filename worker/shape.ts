@@ -30,6 +30,8 @@ export interface Slow {
   aiUniqueToday: Series;
   reddit: Series;             // Reddit's fetches of a Streak King link, by URL and hour (redditWhere)
   returning: Returning | null;
+  sports?: Series;            // Putting Up Numbers only: its pageviews by the page's `sport`
+  sportsUniqueToday?: Series;
 }
 
 // Who came back, from one JQL query over the last RETURNING_DAYS (index.ts);
@@ -57,7 +59,7 @@ export interface RedditRow {
 }
 
 export interface Stats {
-  v: 4;
+  v: 5;
   path: PathKey;
   fetchedAt: string;
   tz: string;
@@ -85,6 +87,7 @@ export interface Stats {
   ai: Row[];
   reddit: { views: Row; links: RedditRow[] }; // views: every reddit-referred pageview as one row
   returning: Returning | null;
+  sports: Row[]; // Putting Up Numbers' sections by sport; empty on any other filter
   staleSince?: string | null; // set by index.ts when a group is the last good copy, the oldest one's fetch time
 }
 
@@ -99,6 +102,7 @@ export interface Stats {
 // server's localhost pageviews stay out. `strip` comes off the front of the
 // Pages list's paths, where it would say the filter again on every row.
 export const PATHS = [
+  { key: 'puttingupnumbers', label: 'putting up numbers', url: 'puttingupnumbers.com/', strip: '' },
   { key: 'cfb-streak-king', label: 'streak king', url: 'drewhoover.com/cfb-streak-king/', strip: '/cfb-streak-king' },
   { key: 'hostile-territory', label: 'hostile territory', url: 'drewhoover.com/hostile-territory/', strip: '/hostile-territory' },
   { key: 'breathing-index', label: 'breathing index', url: 'breathingindex.com/', strip: '' },
@@ -106,7 +110,7 @@ export const PATHS = [
   { key: 'all', label: 'all', url: null, strip: '' },
 ] as const;
 export type PathKey = (typeof PATHS)[number]['key'];
-export const DEFAULT_PATH: PathKey = 'cfb-streak-king';
+export const DEFAULT_PATH: PathKey = 'puttingupnumbers';
 export const isPathKey = (k: string | null): k is PathKey => PATHS.some((p) => p.key === k);
 
 // The URL a filter's pageviews contain, or null for all.
@@ -127,7 +131,70 @@ export function pageName(name: string, key: PathKey = 'all'): string {
 }
 
 export const LIST_ROWS = 12;
-export const INTERNAL = 'drewhoover.com';
+
+// PUN's `sport` as its section's name. The home's pageviews carry one too, so
+// 'home' is only a fallback for a page that registers none.
+const SPORTS: Record<string, string> = {
+  nba: 'NBA', wnba: 'WNBA', nfl: 'NFL', nhl: 'NHL', cfb: 'college football', soccer: 'soccer',
+  mcbb: "men's college basketball", wcbb: "women's college basketball",
+};
+export const sportName = (segment: string): string => (segment === 'undefined' ? 'home' : SPORTS[segment] ?? segment);
+// Drew's own domains. A referrer from one is a reader moving between his
+// pages, listed by domain; any other referrer is listed by its full URL.
+export const INTERNAL = ['drewhoover.com', 'puttingupnumbers.com', 'breathingindex.com'];
+
+// The site a filter's pages are on, for the header.
+export const siteName = (key: PathKey): string => {
+  const url = pathUrl(key);
+  return url ? url.slice(0, url.indexOf('/')) : 'drewhoover.com';
+};
+
+// Who counts: real users only, as the project's VisitorType custom property
+// (5925272) sorts them. Not one of Drew's devices (his browsers' device ids,
+// or the agent test browsers in North Haven), and not a bot (a bot in the id
+// or the user agent, a framed load, an 800x600 screen, Linux at 1920x1080
+// from Ashburn or nowhere, or the headless Mac at 1440x900 that crawled PUN
+// from 2026-11-03). The Query API can't read a custom property (a filter on
+// one matches nothing), so the rules are written out here, once as a
+// segmentation `where` and once as JQL's test. A change to VisitorType in
+// Mixpanel has to land here too.
+export const DREW_DEVICES = [
+  '$device:ae22fd94-5828-45fb-98e5-23b169eb81de', '$device:4513f587-5d83-432a-b833-6f10cf4de1c9',
+  '$device:b29ebd6b-5a2d-4cb6-b159-9f95d1b8c1f6', '$device:8d931490-3f86-48af-92c3-f3f4f0c75ccf',
+  '$device:c6939433-8d2f-407d-9416-a32a7b3f8ea6', '$device:e25cd636-ae66-4d9e-95a4-9ec046ee3959',
+];
+export const DREW_CITY = 'North Haven';
+export const BOT_ID = ['bot', 'crawler'];
+export const BOT_AGENT = [
+  'bot', 'crawl', 'spider', 'slurp', 'headless', 'externalagent', 'externalhit', 'lighthouse',
+  'python', 'curl/', 'wget', 'phantom', 'puppeteer', 'playwright', 'selenium',
+];
+
+const prop = (name: string) => `properties["${name}"]`;
+const anyIn = (words: string[], text: string) => words.map((w) => `"${w}" in lower(${text})`).join(' or ');
+const screen = (w: number, h: number) => `${prop('$screen_width')} == ${w} and ${prop('$screen_height')} == ${h}`;
+export const realWhere = `not (${[
+  `${prop('$distinct_id')} in ${JSON.stringify(DREW_DEVICES)}`,
+  `${prop('$city')} == "${DREW_CITY}"`,
+  `(defined(${prop('$distinct_id')}) and (${anyIn(BOT_ID, prop('$distinct_id'))}))`,
+  `(defined(${prop('user_agent')}) and (${anyIn(BOT_AGENT, prop('user_agent'))}))`,
+  `${prop('framed')} == true`,
+  `(${screen(800, 600)})`,
+  `(${prop('$os')} == "Linux" and ${screen(1920, 1080)} and (not defined(${prop('$city')}) or ${prop('$city')} == "Ashburn"))`,
+  `(${prop('$os')} == "Mac OS X" and ${screen(1440, 900)})`,
+].join(' or ')})`;
+
+// The same test for JQL, which gets the lists as params (index.ts).
+export const REAL_JQL = `function real(e) {
+  var p = e.properties, id = String(e.distinct_id || ''), ua = String(p.user_agent || '').toLowerCase();
+  var has = function (text, words) { for (var i = 0; i < words.length; i++) if (text.indexOf(words[i]) >= 0) return true; return false; };
+  if (params.drewDevices.indexOf(id) >= 0 || p.$city === params.drewCity) return false;
+  if (has(id.toLowerCase(), params.botId) || has(ua, params.botAgent) || p.framed === true) return false;
+  if (p.$screen_width === 800 && p.$screen_height === 600) return false;
+  if (p.$os === 'Linux' && p.$screen_width === 1920 && p.$screen_height === 1080 && (!p.$city || p.$city === 'Ashburn')) return false;
+  if (p.$os === 'Mac OS X' && p.$screen_width === 1440 && p.$screen_height === 900) return false;
+  return true;
+}`;
 
 const sum = (xs: (number | null)[]) => xs.reduce<number>((a, x) => a + (x ?? 0), 0);
 
@@ -303,12 +370,12 @@ export function shape(raw: Raw, now: LocalNow, path: PathKey = 'all', fetchedAt:
   const dayOf = (date: string) => days.find((d) => d.date === date);
 
   const referrers = rank([
-    ...rows(raw.domains, raw.domainsUniqueToday, now.date, domainName, (n) => n === '(direct)' || n === INTERNAL),
+    ...rows(raw.domains, raw.domainsUniqueToday, now.date, domainName, (n) => n === '(direct)' || INTERNAL.includes(n)),
     ...rows(raw.urls, raw.urlsUniqueToday, now.date, outsideName),
   ]);
 
   return {
-    v: 4,
+    v: 5,
     path,
     fetchedAt: fetchedAt.toISOString(),
     tz: now.tz,
@@ -338,5 +405,8 @@ export function shape(raw: Raw, now: LocalNow, path: PathKey = 'all', fetchedAt:
     ai: rank(rows(raw.ai, raw.aiUniqueToday, now.date, aiName, (n) => n !== '')),
     reddit: { views: redditViews(raw.domains, raw.domainsUniqueToday, now.date), links: redditRows(raw.reddit) },
     returning: raw.returning ?? null,
+    sports: raw.sports && raw.sportsUniqueToday
+      ? rank(rows(raw.sports, raw.sportsUniqueToday, now.date, sportName))
+      : [],
   };
 }

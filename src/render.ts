@@ -1,4 +1,4 @@
-import { PATHS, type PathKey } from '../worker/shape';
+import { PATHS, siteName, type PathKey } from '../worker/shape';
 import type { RedditRow, Row, ShareRow, Stats } from './stats';
 
 const esc = (s: string) =>
@@ -163,7 +163,7 @@ export function render(s: Stats, note = '', path: PathKey = s.path): string {
   const back = s.returning;
   return `
   <header class="top" id="refresh" role="button" tabindex="0" aria-label="refresh">
-    <h1>drewhoover.com</h1>
+    <h1>${esc(siteName(path))}</h1>
     <span class="asof">as of ${clock(s.hour, s.minute)} · <span id="ago">${ago(s.fetchedAt)}</span></span>
   </header>
   ${picker(path)}
@@ -181,10 +181,12 @@ export function render(s: Stats, note = '', path: PathKey = s.path): string {
     <div class="stat"><b>${back ? fmt(back.weekVisitors) : fmt(t.weekVisitorsPerDay)}</b><span>${back ? '7 days' : 'per day, 7d'} <em>${fmt(t.week)} views</em></span></div>
   </section>
   ${days(s)}
+  <p class="foot recur">Real users only: no bots, none of Drew's devices.</p>
   ${back ? `<p class="foot recur">${fmt(back.week)} of the week's ${fmt(back.weekVisitors)} visitors came on two or more days; ${fmt(back.today)} of today's ${fmt(t.todayVisitors)} had been here before.</p>` : ''}
   <div class="lists">
     ${list('Referrers', s.referrers)}
     ${list('AI assistants', s.ai ?? [], 'no AI referrals this week', 'By utm_source, else referrer. ChatGPT and Perplexity tag their links and send no referrer.')}
+    ${path === 'puttingupnumbers' ? list('Sports', s.sports ?? [], 'nothing this week') : ''}
     ${list('Pages', s.pages)}
     ${shares(s.shares ?? [])}
     ${reddit(s)}
@@ -194,7 +196,7 @@ export function render(s: Stats, note = '', path: PathKey = s.path): string {
 export function renderMessage(title: string, body: string, path?: PathKey): string {
   return `
   <header class="top" id="refresh" role="button" tabindex="0" aria-label="refresh">
-    <h1>drewhoover.com</h1><span class="asof">pulse</span>
+    <h1>${esc(path ? siteName(path) : 'drewhoover.com')}</h1><span class="asof">pulse</span>
   </header>
   ${picker(path)}
   <section class="message"><h2>${esc(title)}</h2><p>${esc(body)}</p></section>`;

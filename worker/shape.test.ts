@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { aiName, outsideName, pageName, pathWhere, redditLink, shape, type Raw, type Series } from './shape';
+import {
+  aiName, BOT_AGENT, BOT_ID, DREW_CITY, DREW_DEVICES, outsideName, pageName, pathWhere, REAL_JQL, realWhere, redditLink,
+  shape, siteName, type Raw, type Series,
+} from './shape';
 import { addDays, localNow } from './time';
 
 const EVENT = '$mp_web_page_view';
@@ -229,5 +232,61 @@ describe('time', () => {
     expect(addDays('2026-10-11', -6)).toBe('2026-10-05');
     expect(addDays('2026-01-01', -1)).toBe('2025-12-31');
     expect(addDays('2026-02-28', 1)).toBe('2026-03-01');
+  });
+});
+
+describe('who counts', () => {
+  // REAL_JQL run the way JQL runs it, with the lists as params
+  const real = new Function('params', `${REAL_JQL}; return real;`)({
+    drewDevices: DREW_DEVICES, drewCity: DREW_CITY, botId: BOT_ID, botAgent: BOT_AGENT,
+  }) as (e: { distinct_id: string; properties: Record<string, unknown> }) => boolean;
+  const reader = { $os: 'iOS', $screen_width: 390, $screen_height: 844, $city: 'Chicago', user_agent: 'Mozilla/5.0 (iPhone)' };
+  const ev = (properties: Record<string, unknown>, distinct_id = '$device:reader') => ({ distinct_id, properties });
+
+  it('keeps a reader', () => {
+    expect(real(ev(reader))).toBe(true);
+    expect(real(ev({ ...reader, $os: 'Mac OS X', $screen_width: 1512, $screen_height: 982 }))).toBe(true);
+  });
+
+  it("drops Drew's devices and the agent test browsers", () => {
+    expect(real(ev(reader, DREW_DEVICES[0]!))).toBe(false);
+    expect(real(ev({ ...reader, $city: 'North Haven' }))).toBe(false);
+  });
+
+  it('drops the bots Bot Check names, and the headless Mac at 1440x900', () => {
+    expect(real(ev(reader, 'crawl:bingbot'))).toBe(false);
+    expect(real(ev({ ...reader, user_agent: 'Mozilla/5.0 HeadlessChrome/146' }))).toBe(false);
+    expect(real(ev({ ...reader, framed: true }))).toBe(false);
+    expect(real(ev({ ...reader, $screen_width: 800, $screen_height: 600 }))).toBe(false);
+    expect(real(ev({ ...reader, $os: 'Linux', $screen_width: 1920, $screen_height: 1080, $city: undefined }))).toBe(false);
+    expect(real(ev({ ...reader, $os: 'Mac OS X', $screen_width: 1440, $screen_height: 900, $city: 'Princeton' }))).toBe(false);
+  });
+
+  it('says the same rules to the segmentation API', () => {
+    expect(realWhere).toMatch(/^not \(/);
+    for (const id of DREW_DEVICES) expect(realWhere).toContain(id);
+    expect(realWhere).toContain('properties["$os"] == "Mac OS X" and properties["$screen_width"] == 1440 and properties["$screen_height"] == 900');
+    expect(realWhere).toContain('"headless" in lower(properties["user_agent"])');
+  });
+});
+
+describe('Putting Up Numbers', () => {
+  it('names each filter by its site', () => {
+    expect(siteName('puttingupnumbers')).toBe('puttingupnumbers.com');
+    expect(siteName('breathing-index')).toBe('breathingindex.com');
+    expect(siteName('cfb-streak-king')).toBe('drewhoover.com');
+    expect(siteName('all')).toBe('drewhoover.com');
+  });
+
+  it('lists its sports by visitors, the home for a page with none', () => {
+    const r = raw();
+    r.sports = series({ cfb: { '2026-10-11': 30 }, nfl: { '2026-10-10': 9, '2026-10-11': 4 }, undefined: { '2026-10-11': 2 } });
+    r.sportsUniqueToday = series({ cfb: { '2026-10-11': 12 }, nfl: { '2026-10-11': 3 }, undefined: { '2026-10-11': 2 } }, ['2026-10-11']);
+    expect(shape(r, NOW, 'puttingupnumbers').sports).toEqual([
+      { name: 'college football', today: 30, visitors: 12, week: 30 },
+      { name: 'NFL', today: 4, visitors: 3, week: 13 },
+      { name: 'home', today: 2, visitors: 2, week: 2 },
+    ]);
+    expect(shape(raw(), NOW, 'cfb-streak-king').sports).toEqual([]);
   });
 });
