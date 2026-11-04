@@ -20,12 +20,19 @@
 // all hour fits the budget and two polled at once do not: the page polls only
 // the filter it shows.
 //
+// Putting Up Numbers' three numbers (measures.ts) are one more JQL call, in a
+// group of their own that refreshes every MEASURES_SECONDS: they compare
+// months, so they spend about four calls a day and leave the hourly sums above
+// where they were. A failed refresh keeps the last answer for MEASURES_RETRY
+// rather than asking again on every poll.
+//
 //   GET /pulse/api/stats?path=puttingupnumbers|cfb-streak-king|…|all   (default puttingupnumbers)
 
 import {
   aiOn, aiWhere, BOT_AGENT, BOT_ID, DEFAULT_PATH, DREW_CITY, DREW_DEVICES, INTERNAL, REAL_JQL, realWhere, redditWhere,
   isPathKey, pathUrl, pathWhere, shape, type Returning, type Fast, type PathKey, type Raw, type Series, type Slow,
 } from './shape';
+import { ACTS, MEASURE_DAYS, MEASURES_JQL, measures, RESOLVE_SECONDS, SESSION_MINUTES, type MeasureDays } from './measures';
 import { addDays, localNow, offsetMs, type LocalNow } from './time';
 
 export interface Env {
@@ -40,6 +47,8 @@ export interface Env {
 
 const FAST_SECONDS = 300;
 const SLOW_SECONDS = 1800;
+const MEASURES_SECONDS = 21_600;
+const MEASURES_RETRY = 1800;
 const RAW_VERSION = 6; // bump with any change to what is fetched, so a stale cached group is skipped
 
 const JSON_TYPE = 'application/json; charset=utf-8';
@@ -190,6 +199,31 @@ async function fetchReturning(c: Client, today: string, url: string | null): Pro
   }
 }
 
+// The three numbers' days. A failure throws, unlike who came back: the group
+// keeps its last good copy, and the screen draws without the numbers if it has
+// none.
+async function fetchMeasures(c: Client, today: string, url: string): Promise<MeasureDays> {
+  const { env } = c;
+  const body = new URLSearchParams({
+    project_id: env.MIXPANEL_PROJECT_ID,
+    script: MEASURES_JQL,
+    params: JSON.stringify({
+      from: addDays(today, -(MEASURE_DAYS - 1)), to: today, url, event: env.PAGEVIEW_EVENT, acts: ACTS,
+      offset: offsetMs(env.MIXPANEL_TZ), sessionMs: SESSION_MINUTES * 60_000, resolveMs: RESOLVE_SECONDS * 1000,
+      drewDevices: DREW_DEVICES, drewCity: DREW_CITY, botId: BOT_ID, botAgent: BOT_AGENT,
+    }),
+  });
+  const res = await call(c, 'jql', () => fetch(`${env.MIXPANEL_API}/api/query/jql`, {
+    method: 'POST',
+    headers: { authorization: `Basic ${btoa(env.MIXPANEL_SERVICE_ACCOUNT!)}`, accept: 'application/json' },
+    body,
+  }));
+  if (!res.ok) throw new MixpanelError(res.status, `mixpanel jql ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const answer = await res.json<unknown>();
+  if (!Array.isArray(answer)) throw new Error('mixpanel jql: the answer is not a list');
+  return (answer[0] ?? {}) as MeasureDays; // no events in the window: an empty list
+}
+
 async function fetchSlow(c: Client, today: string, path: string, url: string | null, sports: boolean): Promise<Slow> {
   const event = c.env.PAGEVIEW_EVENT;
   const weekStart = addDays(today, -6);
@@ -238,7 +272,9 @@ async function fetchSlow(c: Client, today: string, path: string, url: string | n
 // whole project, since the limit is the project's), the last good copy is
 // served with the time it was fetched, and a 429 sends no call at all until
 // the marker expires: an open page polling every five minutes would
-// otherwise spend every refresh on refusals.
+// otherwise spend every refresh on refusals. With `retry`, any failure also
+// stands as the answer for that long, null if there is no copy, so a query
+// that keeps failing costs one call a `retry`, not one a poll.
 const BACKOFF_SECONDS = 600;
 
 interface Kept<T> { at: string; value: T }
@@ -255,7 +291,7 @@ export class RateLimited extends Error {
 }
 
 async function cachedGroup<T>(
-  ctx: ExecutionContext, name: string, now: LocalNow, ttl: number, load: () => Promise<T>,
+  ctx: ExecutionContext, name: string, now: LocalNow, ttl: number, load: () => Promise<T>, retry?: number,
 ): Promise<Group<T>> {
   const fresh = cacheKey(name, now.date);
   const keep = cacheKey(`last-${name}`, now.date);
@@ -287,6 +323,7 @@ async function cachedGroup<T>(
     const until = new Date(Date.now() + BACKOFF_SECONDS * 1000).toISOString();
     if (limited) ctx.waitUntil(caches.default.put(backoff, stored({ until }, BACKOFF_SECONDS)));
     const last = await lastGood();
+    if (retry) ctx.waitUntil(caches.default.put(fresh, stored(last?.value ?? null, retry)));
     if (last) return { value: last.value, hit: false, staleSince: last.at };
     throw limited ? new RateLimited(until) : e;
   }
@@ -317,11 +354,17 @@ export default {
     let raw: Raw;
     let cache: string;
     let staleSince: string | null;
+    let days: MeasureDays | null = null;
     try {
-      const [fast, slow] = await Promise.all([
+      const [fast, slow, measured] = await Promise.all([
         cachedGroup(ctx, `fast-${pathKey}`, now, FAST_SECONDS, () => fetchFast(client, now.date, where)),
         cachedGroup(ctx, `slow-${pathKey}`, now, SLOW_SECONDS, () => fetchSlow(client, now.date, where, pathUrl(pathKey), pathKey === 'puttingupnumbers')),
+        // never the screen's failure, and never what its stale note reports: the group is hours old by design
+        pathKey === 'puttingupnumbers'
+          ? cachedGroup<MeasureDays | null>(ctx, 'measures', now, MEASURES_SECONDS, () => fetchMeasures(client, now.date, pathUrl(pathKey)!), MEASURES_RETRY).catch(() => null)
+          : null,
       ]);
+      days = measured?.value ?? null;
       raw = { event: env.PAGEVIEW_EVENT, ...fast.value, ...slow.value };
       const state = (g: Group<unknown>) => (g.staleSince ? 'stale' : g.hit ? 'hit' : 'miss');
       cache = `fast=${state(fast)} slow=${state(slow)}`;
@@ -330,6 +373,6 @@ export default {
       if (e instanceof RateLimited) return json({ error: e.message, retryAfter: e.until }, 503);
       return json({ error: e instanceof Error ? e.message : String(e) }, 502);
     }
-    return json({ ...shape(raw, now, pathKey), staleSince }, 200, { 'x-pulse-cache': cache });
+    return json({ ...shape(raw, now, pathKey), measures: days && measures(days, now.date), staleSince }, 200, { 'x-pulse-cache': cache });
   },
 } satisfies ExportedHandler<Env>;

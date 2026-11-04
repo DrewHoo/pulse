@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
+import { MEASURES_JQL, type Measures } from './measures';
 import { realWhere } from './shape';
 
 // The worker against a stand-in Mixpanel: every call is recorded and answered
@@ -17,11 +18,13 @@ const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown
 
 let calls: URL[] = [];
 let status = 200;
+let jql: unknown = null; // what a measures call answers, or the stand-in's series
 let store = new Map<string, Response>();
 
 beforeEach(() => {
   calls = [];
   status = 200;
+  jql = null;
   store = new Map<string, Response>();
   vi.stubGlobal('caches', {
     default: {
@@ -29,8 +32,10 @@ beforeEach(() => {
       put: async (req: Request, res: Response) => { store.set(req.url, res); },
     },
   });
-  vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push(new URL(String(input)));
+    if (isMeasures(init)) measuresCalls++;
+    if (isMeasures(init) && jql !== null) return new Response(JSON.stringify(jql), { status: 200 });
     if (status !== 200) return new Response('{"error": "Query rate limit exceeded"}', { status });
     return new Response(JSON.stringify({ data: { series: [], values: {} } }), { status: 200 });
   });
@@ -39,6 +44,9 @@ beforeEach(() => {
   subtle.timingSafeEqual ??= (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 });
 afterEach(() => vi.unstubAllGlobals());
+
+let measuresCalls = 0;
+const isMeasures = (init?: RequestInit) => init?.body instanceof URLSearchParams && init.body.get('script') === MEASURES_JQL;
 
 const stats = (q = '') => worker.fetch(
   new Request(`https://drewhoover.com/pulse/api/stats${q}`, { headers: { authorization: 'Bearer test-token' } }),
@@ -110,6 +118,59 @@ describe('the path filter', () => {
     const res = await stats('?path=/etc/');
     expect(res.status).toBe(400);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('the three numbers', () => {
+  const expire = (name: string) => { for (const k of [...store.keys()]) if (k.includes(`/${name}`)) store.delete(k); };
+  const read = async (res: Response) => (await res.json() as { measures?: Measures | null }).measures;
+  const day = { landings: 4, hunted: 1, acted: 2, named: 5, team: { landings: 0, hunted: 0, acted: 0, named: 0 }, ms: [120, 300] };
+
+  beforeEach(() => { measuresCalls = 0; });
+
+  it('asks once for Putting Up Numbers and sums the days', async () => {
+    const date = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    jql = [{ [date]: day }];
+    const m = await read(await stats());
+    expect(measuresCalls).toBe(1);
+    expect(m?.week.landings).toBe(4);
+    expect(m?.week.median).toBe(210);
+  });
+
+  it('asks nothing for any other filter', async () => {
+    const m = await read(await stats('?path=cfb-streak-king'));
+    expect(measuresCalls).toBe(0);
+    expect(m).toBeNull();
+  });
+
+  it('holds its answer through the slow group refreshing', async () => {
+    jql = [{}];
+    await stats();
+    expire('slow-');
+    expire('fast-');
+    await stats();
+    expect(measuresCalls).toBe(1);
+  });
+
+  it('draws the screen without them, and a failure asks again only after the retry', async () => {
+    const res = await stats(); // the stand-in answers a series, not a list
+    expect(res.status).toBe(200);
+    expect(await read(res)).toBeNull();
+    expect(measuresCalls).toBe(1);
+    await stats();
+    expect(measuresCalls).toBe(1);
+  });
+
+  it('keeps the last good copy over a failure, without calling the screen stale', async () => {
+    jql = [{}];
+    await stats();
+    expire('measures');
+    jql = null;
+    const res = await stats();
+    const body = await res.json() as { measures: Measures | null; staleSince: string | null };
+    expect(measuresCalls).toBe(2);
+    expect(body.measures?.month.landings).toBe(0);
+    expect(body.staleSince).toBeNull();
   });
 });
 

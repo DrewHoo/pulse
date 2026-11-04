@@ -1,5 +1,5 @@
 import { PATHS, siteName, type PathKey } from '../worker/shape';
-import type { RedditRow, Row, ShareRow, Stats } from './stats';
+import type { Measures, MeasureWindow, RedditRow, Row, ShareRow, Stats, Tally } from './stats';
 
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -147,6 +147,31 @@ function reddit(s: Stats): string {
   </section>`;
 }
 
+const share = (t: Tally) => (t.landings === 0 ? '–' : `${((t.hunted / t.landings) * 100).toFixed(1)}%`);
+const depth = (t: Tally) => (t.landings === 0 ? '–' : (t.named / t.landings).toFixed(2));
+const ms = (n: number | null) => (n === null ? '–' : `${fmt(n)}ms`);
+
+// Putting Up Numbers' three numbers, the README's definitions: the week, the
+// month and the month before it, so a change reads against its before.
+export function measuresList(m: Measures): string {
+  const row = (name: string, read: (w: MeasureWindow) => string, sub = false) => `
+    <div class="row${sub ? ' sub' : ''}">
+      <span class="name">${esc(name)}</span>
+      <span class="n">${esc(read(m.week))}</span>
+      <span class="n">${esc(read(m.month))}</span>
+      <span class="n">${esc(read(m.before))}</span>
+    </div>`;
+  return `<section class="list measures">
+    <header><h2>Three numbers</h2><span class="n">7d</span><span class="n">28d</span><span class="n">28d before</span></header>
+    ${row('Hunting', share)}
+    ${row('team pages', (w) => share(w.team), true)}
+    ${row('Instant', (w) => ms(w.median))}
+    ${row('Depth', depth)}
+    ${row('team pages', (w) => depth(w.team), true)}
+    <p class="foot">Hunting: ${fmt(m.month.hunted)} of ${fmt(m.month.landings)} landings in 28 days (${fmt(m.month.team.landings)} on team pages) opened on a search or a sentence change; ${fmt(m.month.acted)} did anything. Instant: ${m.month.answers ? `the median of ${fmt(m.month.answers)} answers, 90th percentile ${ms(m.month.p90)}` : 'no answers yet'}. Depth: named pages a session.</p>
+  </section>`;
+}
+
 // The path filter, a row of buttons under the header; main.ts wires the clicks.
 function picker(current: PathKey | undefined): string {
   if (!current) return '';
@@ -183,6 +208,7 @@ export function render(s: Stats, note = '', path: PathKey = s.path): string {
   ${days(s)}
   <p class="foot recur">Real users only: no bots, none of Drew's devices.</p>
   ${back ? `<p class="foot recur">${fmt(back.week)} of the week's ${fmt(back.weekVisitors)} visitors came on two or more days; ${fmt(back.today)} of today's ${fmt(t.todayVisitors)} had been here before.</p>` : ''}
+  ${s.measures ? measuresList(s.measures) : ''}
   <div class="lists">
     ${list('Referrers', s.referrers)}
     ${list('AI assistants', s.ai ?? [], 'no AI referrals this week', 'By utm_source, else referrer. ChatGPT and Perplexity tag their links and send no referrer.')}

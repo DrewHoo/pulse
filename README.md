@@ -33,6 +33,12 @@ minutes, the rest thirty). Mixpanel allows 60 queries an hour per project; when
 it answers 429 the worker sends nothing for ten minutes and serves the day's
 last good answer meanwhile, which the page notes with its age.
 
+Putting Up Numbers' screen adds its three numbers (below) under the days. They
+come from one JQL query that refreshes every six hours, about four calls a day,
+so the hourly budget above doesn't move. A failed refresh keeps the last good
+answer and doesn't ask again for thirty minutes, and the screen draws without
+the numbers if it has none.
+
 The page is not linked from the index site and carries `noindex`. The data is
 gated by a bearer token the page sends from its `?k=` query. Open the page once
 with `?k=<token>` and add it to the home screen from that address: the
@@ -41,6 +47,41 @@ Safari would not carry over.
 
 The page deliberately does not load the index site's analytics embed, because
 it reads the site's pageviews and must not add to them.
+
+## The three numbers
+
+Settled 2026-11-04, for `specs/strategy.spec.md` in Putting Up Numbers. A
+changed definition resets the before, so a change here is a new number with a
+new name. `worker/measures.ts` computes them, real users only.
+
+A **session** is one visitor's events on puttingupnumbers.com with no gap of 30
+minutes or more. Its day is the New York day of its landing.
+
+A **landing** is a session's first pageview. A builder address (`/<sport>/build/`)
+followed by a pageview at another path within 2 seconds is the site resolving
+the address to a named page, so the landing is the named page.
+
+An **act** is a `query`, a `find`, a `split`, an `open`, or a pageview at a path
+other than the landing's. A window pick, a reload and an opened row's own
+address aren't acts. JQL's time is in whole seconds, and a tie goes to the
+`query`, `find` or `split`.
+
+- **Hunting** is the landings whose first act was a `query`, `find` or `split`,
+  over all landings. A landing with no act counts in the landings. Lower is
+  better. The foot of the list says how many landings acted at all.
+- **Instant** is the median `ms` of the `answer` events. The site sends `answer`
+  after a `query`: the time from the pick to the frame after its page commits.
+  A `query` that leaves the same page up, one a later `query` replaced, one a
+  link overtook, and one in a hidden tab send none. `answer` starts with the
+  site's deploy of 2026-11-04, so Instant has no before.
+- **Depth** is the named pages a session, the mean over all sessions. A named
+  page is a path outside the builder, counted once a session however the reader
+  got there, the landing included.
+
+Each number reads three windows: the last 7 days and the last 28, today among
+them, and the 28 days before those. The team pages rows are the sessions that
+landed on `/<sport>/teams/<team>/` itself, not its position pages or splits.
+Instant has no such row.
 
 ## Setup
 

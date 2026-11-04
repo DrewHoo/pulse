@@ -1,3 +1,4 @@
+import type { Measures } from './measures';
 import { addDays, pad2, type LocalNow } from './time';
 
 // The two Query API endpoints the worker reads both answer in this shape:
@@ -88,6 +89,7 @@ export interface Stats {
   reddit: { views: Row; links: RedditRow[] }; // views: every reddit-referred pageview as one row
   returning: Returning | null;
   sports: Row[]; // Putting Up Numbers' sections by sport; empty on any other filter
+  measures?: Measures | null; // set by index.ts: Putting Up Numbers' three numbers, null on any other filter or with no answer yet
   staleSince?: string | null; // set by index.ts when a group is the last good copy, the oldest one's fetch time
 }
 
