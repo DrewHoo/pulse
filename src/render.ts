@@ -1,7 +1,7 @@
-import { PATHS, siteName, type PathKey } from '../worker/shape';
-import type { Measures, MeasureWindow, RedditRow, Row, ShareRow, Stats, Tally } from './stats';
+import { LIST_ROWS, PATHS, type PathKey } from '../worker/shape';
+import type { Measures, MeasureWindow, RedditRow, Row, ShareRow, SourceLanding, Stats, Tally } from './stats';
 
-const esc = (s: string) =>
+export const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -27,7 +27,9 @@ export function ago(fetchedAt: string, now: Date = new Date()): string {
 }
 
 // Visitors by hour: yesterday as ghost bars behind today's solid ones, the
-// current hour in the accent color. Both scale to the larger day's peak.
+// current hour in the accent color. Both scale to the larger day's peak. The
+// SVG stretches to the width, so its labels are HTML, which keeps them their
+// size at any width.
 function bars(s: Stats): string {
   const W = 24, H = 48, gap = 1.5;
   const yesterdayHours = s.hours.yesterdayVisitors;
@@ -43,12 +45,12 @@ function bars(s: Stats): string {
       `<rect class="${h === s.hour ? 'now' : 'today'}" x="${x}" y="${y(today)}" width="${W - gap * 2}" height="${Math.max(today > 0 ? 1 : 0, H - y(today))}"/>`;
     return g + t;
   }).join('');
-  const ticks = [0, 6, 12, 18].map((h) =>
-    `<text x="${h * W + gap}" y="${H + 11}">${hourLabel(h)}</text>`).join('');
-  return `<svg class="bars" viewBox="0 0 ${24 * W} ${H + 14}" preserveAspectRatio="none" aria-label="visitors by hour, today over yesterday">
-    ${rects}${ticks}
-    <text class="peak" x="${24 * W - gap}" y="9" text-anchor="end">${fmt(peak)}</text>
-  </svg>`;
+  const ticks = [0, 6, 12, 18].map((h) => `<span style="left:${(h / 24) * 100}%">${hourLabel(h)}</span>`).join('');
+  return `<div class="hours">
+    <svg class="bars" viewBox="0 0 ${24 * W} ${H}" preserveAspectRatio="none" aria-label="visitors by hour, today over yesterday">${rects}</svg>
+    <span class="peak">${fmt(peak)}</span>
+    <div class="ticks">${ticks}</div>
+  </div>`;
 }
 
 function days(s: Stats): string {
@@ -68,7 +70,7 @@ function list(title: string, rows: Row[], empty = 'nothing this week', foot = ''
   const peak = Math.max(1, ...rows.map((r) => r.visitors));
   const body = rows.length === 0 ? `<div class="empty">${esc(empty)}</div>` : rows.map((r) => `
     <div class="row" title="${esc(r.name)}">
-      <span class="name"><i style="width:${Math.round((r.visitors / peak) * 100)}%"></i>${esc(r.name)}</span>
+      <span class="name"><i class="bar" style="width:${Math.round((r.visitors / peak) * 100)}%"></i>${esc(r.name)}</span>
       <span class="n">${fmt(r.visitors)}</span>
       <span class="v">${fmt(r.today)}</span>
       <span class="w">${fmt(r.week)}</span>
@@ -82,11 +84,12 @@ function list(title: string, rows: Row[], empty = 'nothing this week', foot = ''
 
 // Link previews: one row per app a Streak King link was pasted into. No
 // visitors column, since a preview is a bot's fetch, not a person.
-function shares(rows: ShareRow[]): string {
-  const peak = Math.max(1, ...rows.map((r) => r.week));
-  const body = rows.length === 0 ? `<div class="empty">no links shared this week</div>` : rows.map((r) => `
+function shares(rows: ShareRow[] | null): string {
+  const peak = Math.max(1, ...(rows ?? []).map((r) => r.week));
+  const body = rows === null ? `<div class="empty">${NO_ANSWER}</div>`
+    : rows.length === 0 ? `<div class="empty">no links shared this week</div>` : rows.map((r) => `
     <div class="row">
-      <span class="name"><i style="width:${Math.round((r.week / peak) * 100)}%"></i>${esc(r.name)}</span>
+      <span class="name"><i class="bar" style="width:${Math.round((r.week / peak) * 100)}%"></i>${esc(r.name)}</span>
       <span class="n">${fmt(r.today)}</span>
       <span class="v"></span>
       <span class="w">${fmt(r.week)}</span>
@@ -97,6 +100,9 @@ function shares(rows: ShareRow[]): string {
     <p class="foot">Streak King link previews by app. Their clicks arrive as (direct).</p>
   </section>`;
 }
+
+// The link previews come from the Query API apart from the rest of the screen.
+const NO_ANSWER = "Mixpanel didn't answer; trying again in half an hour";
 
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -118,6 +124,30 @@ function viewName(url: string): string {
   return decodeURIComponent(`${path}${u.search}`.replace(/\+/g, ' '));
 }
 
+// "Sat 8p", or "8p" when it is today, in the phone's own timezone.
+function whenAt(at: number, now: Date = new Date()): string {
+  const then = new Date(at);
+  const hour = hourLabel(then.getHours());
+  return then.toDateString() === now.toDateString() ? hour : `${DAY[then.getDay()]} ${hour}`;
+}
+
+// The pages Reddit's visitors landed on this week. Reddit's referrer never
+// names a thread, so a landing address is the nearest thing to a link someone
+// posted: one row a link, whichever posts and comments carry it.
+function redditLandings(landings: SourceLanding[] | undefined): string {
+  if (!landings) return ''; // an answer kept from before the list existed
+  const rows = landings.slice(0, LIST_ROWS).map((l) => `
+    <div class="row landed">
+      <span class="name"><a href="${esc(l.href)}" target="_blank" rel="noopener noreferrer"><span class="site">${esc(l.site)}</span> ${esc(l.page)}${l.query ? `<q>?${esc(l.query)}</q>` : ''}</a>${l.isNew ? ' <mark>new</mark>' : ''}</span>
+      <span class="n">${fmt(l.visitors)}</span>
+      <span class="w">${esc(whenAt(l.first))}</span>
+    </div>`).join('');
+  return `
+    <h3 class="cols"><span>links people arrived by, 7 days</span><span class="n">vis</span><span class="w">first</span></h3>
+    ${rows || `<div class="empty">nobody arrived by a Reddit link this week</div>`}
+    <p class="foot">Each page a visit from Reddit landed on. One row a link, whichever posts and comments carry it, and a link nobody clicked isn't here.</p>`;
+}
+
 const isSite = (url: string) => { try { return new URL(url).hostname === 'drewhoover.com'; } catch { return false; } };
 
 // Leads to look up on Reddit: each link Reddit fetched, with how it fetched
@@ -125,7 +155,8 @@ const isSite = (url: string) => { try { return new URL(url).hostname === 'drewho
 function reddit(s: Stats): string {
   const r = s.reddit ?? { views: { name: 'reddit', today: 0, visitors: 0, week: 0 }, links: [] };
   const kind = (l: RedditRow) => [l.crawler ? 'link post' : '', l.text ? 'in text' : ''].filter(Boolean).join(' + ');
-  const body = r.links.length === 0 ? `<div class="empty">no Reddit fetches this week</div>` : r.links.map((l) => `
+  const body = r.links === null ? `<div class="empty">${NO_ANSWER}</div>`
+    : r.links.length === 0 ? `<div class="empty">no Reddit fetches this week</div>` : r.links.map((l) => `
     <div class="row lead" title="${esc(l.url)}">
       <span class="name">${isSite(l.url)
         ? `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(viewName(l.url))}</a>`
@@ -141,6 +172,7 @@ function reddit(s: Stats): string {
       <span class="v">${fmt(r.views.today)}</span>
       <span class="w">${fmt(r.views.week)}</span>
     </div>
+    ${redditLandings(s.redditLandings)}
     <h3>links Reddit fetched</h3>
     ${body}
     <p class="foot">A link post's URL is fetched by Reddit's crawler (a draft can be too); a link in a post's or comment's text, &amp;amp;-escaped. Leads, not a count: look them up on Reddit.</p>
@@ -172,6 +204,24 @@ export function measuresList(m: Measures): string {
   </section>`;
 }
 
+// Pulse's two screens. The numbers are counts by hour, day and list; the
+// visitors are the last hours' browsers, one card each (visitors.ts).
+const SCREENS = ['numbers', 'visitors'] as const;
+export type Screen = (typeof SCREENS)[number];
+export const isScreen = (s: string | null): s is Screen => SCREENS.some((name) => name === s);
+
+// The top of both screens: the screens' names, and when the answer was
+// fetched, which is the refresh button. `asOf` is HTML.
+export function topBar(screen: Screen, asOf = 'pulse'): string {
+  return `
+  <header class="top">
+    <nav class="screens" aria-label="screens">${SCREENS.map((name) =>
+      `<button type="button" data-screen="${name}" class="${name === screen ? 'on' : ''}" aria-pressed="${name === screen}">${name}</button>`,
+    ).join('')}</nav>
+    <button type="button" class="asof" id="refresh" aria-label="refresh">${asOf}</button>
+  </header>`;
+}
+
 // The path filter, a row of buttons under the header; main.ts wires the clicks.
 function picker(current: PathKey | undefined): string {
   if (!current) return '';
@@ -187,43 +237,44 @@ export function render(s: Stats, note = '', path: PathKey = s.path): string {
   const vsYday = pct(t.todayVisitorHours, t.yesterdayVisitorHoursToHour);
   const back = s.returning;
   return `
-  <header class="top" id="refresh" role="button" tabindex="0" aria-label="refresh">
-    <h1>${esc(siteName(path))}</h1>
-    <span class="asof">as of ${clock(s.hour, s.minute)} · <span id="ago">${ago(s.fetchedAt)}</span></span>
-  </header>
+  ${topBar('numbers', `as of ${clock(s.hour, s.minute)} · <span id="ago">${ago(s.fetchedAt)}</span>`)}
   ${picker(path)}
   ${note ? `<p class="note">${esc(note)}</p>` : ''}
-  <section class="hero">
+  <div class="numbers">
+  <section class="today">
+  <div class="hero">
     <div class="stat big"><b>${fmt(t.thisHourVisitors)}</b><span>visitors this hour <em>${s.minute}m in · ${fmt(t.thisHour)} views</em></span></div>
     <div class="stat"><b>${fmt(t.lastHourVisitors)}</b><span>last hour <em>${fmt(t.lastHour)} views</em></span></div>
     <div class="stat"><b>${back ? fmt(back.today) : '–'}</b><span>returning <em>today</em></span></div>
-  </section>
+  </div>
   ${bars(s)}
-  <section class="strip">
+  <div class="strip">
     <div class="stat"><b>${fmt(t.todayVisitors)}</b><span>today <em>${fmt(t.today)} views</em></span></div>
     <div class="stat"><b class="${vsYday.startsWith('−') ? 'down' : 'up'}">${esc(vsYday || '±0')}</b><span>vs yday so far</span></div>
     <div class="stat"><b>${fmt(t.yesterdayVisitors)}</b><span>yday <em>${fmt(t.yesterday)} views</em></span></div>
     <div class="stat"><b>${back ? fmt(back.weekVisitors) : fmt(t.weekVisitorsPerDay)}</b><span>${back ? '7 days' : 'per day, 7d'} <em>${fmt(t.week)} views</em></span></div>
-  </section>
+  </div>
   ${days(s)}
   <p class="foot recur">Real users only: no bots, none of Drew's devices.</p>
-  ${back ? `<p class="foot recur">${fmt(back.week)} of the week's ${fmt(back.weekVisitors)} visitors came on two or more days; ${fmt(back.today)} of today's ${fmt(t.todayVisitors)} had been here before.</p>` : ''}
+  ${back ? `<p class="foot recur">${fmt(back.week)} of the week's ${fmt(back.weekVisitors)} visitors came on two or more days; ${fmt(back.today)} of today's ${fmt(t.todayVisitors)} had been here earlier in the week.</p>` : ''}
+  </section>
   ${s.measures ? measuresList(s.measures) : ''}
   <div class="lists">
     ${list('Referrers', s.referrers)}
     ${list('AI assistants', s.ai ?? [], 'no AI referrals this week', 'By utm_source, else referrer. ChatGPT and Perplexity tag their links and send no referrer.')}
     ${path === 'puttingupnumbers' ? list('Sports', s.sports ?? [], 'nothing this week') : ''}
     ${list('Pages', s.pages)}
-    ${shares(s.shares ?? [])}
+    ${shares(s.shares)}
     ${reddit(s)}
+  </div>
   </div>`;
 }
 
-export function renderMessage(title: string, body: string, path?: PathKey): string {
+// A screen with no answer to draw: loading, no token, or a failure. `path` is
+// the numbers screen's filter, so its picker still shows.
+export function renderMessage(screen: Screen, title: string, body: string, path?: PathKey): string {
   return `
-  <header class="top" id="refresh" role="button" tabindex="0" aria-label="refresh">
-    <h1>${esc(path ? siteName(path) : 'drewhoover.com')}</h1><span class="asof">pulse</span>
-  </header>
-  ${picker(path)}
+  ${topBar(screen)}
+  ${screen === 'numbers' ? picker(path) : ''}
   <section class="message"><h2>${esc(title)}</h2><p>${esc(body)}</p></section>`;
 }

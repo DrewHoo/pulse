@@ -1,30 +1,43 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
 import { MEASURES_JQL, type Measures } from './measures';
-import { realWhere } from './shape';
+import { WEEK_HOURS } from './numbers';
+import { realWhere, type Stats } from './shape';
+import { exportDays, type Visitors } from './visitors';
 
-// The worker against a stand-in Mixpanel: every call is recorded and answered
-// with an empty series, so the test reads which calls a filter makes.
+// The worker against a stand-in Mixpanel: every call is recorded, an export
+// call answers its day's lines of `exported`, and a Query API call an empty
+// series, so the test reads which calls a screen makes.
 const env: Env = {
   MIXPANEL_SERVICE_ACCOUNT: 'user:secret',
   PULSE_TOKEN: 'test-token',
   MIXPANEL_PROJECT_ID: '1',
   MIXPANEL_TZ: 'America/New_York',
   MIXPANEL_API: 'https://mixpanel.invalid',
+  MIXPANEL_EXPORT: 'https://data.mixpanel.invalid',
   PAGEVIEW_EVENT: '$mp_web_page_view',
   UNFURL_EVENT: 'share unfurl',
 };
-const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
+// Work the worker leaves running behind a response. A request here waits for
+// it, so the calls a test counts are all in before it counts them.
+const behind: Promise<unknown>[] = [];
+const ctx = { waitUntil: (p: Promise<unknown>) => { behind.push(p); }, passThroughOnException: () => {} } as unknown as ExecutionContext;
+async function settled<T>(res: T): Promise<T> {
+  while (behind.length > 0) await Promise.allSettled(behind.splice(0));
+  return res;
+}
 
 let calls: URL[] = [];
 let status = 200;
 let jql: unknown = null; // what a measures call answers, or the stand-in's series
+let exported = ''; // what an export call answers: a JSON object a line
 let store = new Map<string, Response>();
 
 beforeEach(() => {
   calls = [];
   status = 200;
   jql = null;
+  exported = '';
   store = new Map<string, Response>();
   vi.stubGlobal('caches', {
     default: {
@@ -37,6 +50,7 @@ beforeEach(() => {
     if (isMeasures(init)) measuresCalls++;
     if (isMeasures(init) && jql !== null) return new Response(JSON.stringify(jql), { status: 200 });
     if (status !== 200) return new Response('{"error": "Query rate limit exceeded"}', { status });
+    if (String(input).startsWith(env.MIXPANEL_EXPORT)) return new Response(exportedOn(calls.at(-1)!.searchParams.get('from_date')!), { status: 200 });
     return new Response(JSON.stringify({ data: { series: [], values: {} } }), { status: 200 });
   });
   // Node has no timingSafeEqual; the worker only ever passes it encoded strings
@@ -45,73 +59,83 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+// The export answers a day with that UTC day's events, as Mixpanel does.
+const exportedOn = (day: string) => exported.split('\n').filter((line) =>
+  line && new Date((JSON.parse(line) as { properties: { time: number } }).properties.time).toISOString().startsWith(day)).join('\n');
+
 let measuresCalls = 0;
 const isMeasures = (init?: RequestInit) => init?.body instanceof URLSearchParams && init.body.get('script') === MEASURES_JQL;
 
-const stats = (q = '') => worker.fetch(
+const stats = async (q = '') => settled(await worker.fetch(
   new Request(`https://drewhoover.com/pulse/api/stats${q}`, { headers: { authorization: 'Bearer test-token' } }),
   env, ctx,
-);
+));
 
-describe('the path filter', () => {
-  it('defaults to Putting Up Numbers, every pageview call its pages and real users, with its sports', async () => {
-    const res = await stats();
+const exports = () => calls.filter((u) => u.pathname === '/api/2.0/export');
+const queries = () => calls.filter((u) => u.pathname.startsWith('/api/query/'));
+const weekDays = () => exportDays(new Date(), WEEK_HOURS).length;
+const pageview = (device: string, hoursAgo: number, url: string, more: Record<string, unknown> = {}) => JSON.stringify({
+  event: '$mp_web_page_view',
+  properties: {
+    time: Date.now() - hoursAgo * 3_600_000, distinct_id: `$device:${device}`, $device_id: device, $insert_id: `${device}${hoursAgo}`,
+    $current_url: url, ...more,
+  },
+});
+
+describe('the numbers screen', () => {
+  it('asks the export for a week, one UTC day a call, real users only', async () => {
+    const res = await stats('?path=cfb-streak-king');
     expect(res.status).toBe(200);
-    expect((await res.json() as { path: string }).path).toBe('puttingupnumbers');
-    const pageviews = calls.filter((u) => u.searchParams.get('event')?.includes('$mp_web_page_view'));
-    expect(pageviews).toHaveLength(14);
-    for (const u of pageviews) {
-      expect(u.pathname).toBe('/api/query/segmentation');
-      expect(u.searchParams.get('where')).toContain('"puttingupnumbers.com/" in properties["$current_url"]');
-      expect(u.searchParams.get('where')).toContain(realWhere);
-    }
-    expect(pageviews.filter((u) => u.searchParams.get('on') === 'properties["sport"]')).toHaveLength(2);
-  });
-
-  it('filters Streak King to its path, without the sports', async () => {
-    await stats('?path=cfb-streak-king');
-    const pageviews = calls.filter((u) => u.searchParams.get('event')?.includes('$mp_web_page_view'));
-    expect(pageviews).toHaveLength(12);
-    for (const u of pageviews) {
-      expect(u.searchParams.get('where')).toContain('"drewhoover.com/cfb-streak-king/" in properties["$current_url"]');
+    expect(exports()).toHaveLength(weekDays());
+    for (const u of exports()) {
+      expect(u.searchParams.get('to_date')).toBe(u.searchParams.get('from_date'));
+      expect(u.searchParams.get('where')).toBe(realWhere);
     }
   });
 
-  it('leaves the link previews unfiltered by path', async () => {
+  it('asks the Query API only for the link previews, unfiltered by path, and the three numbers on Putting Up Numbers', async () => {
     await stats('?path=cfb-streak-king');
-    const unfurls = calls.filter((u) => u.searchParams.get('event') === 'share unfurl');
-    expect(unfurls).toHaveLength(2);
-    const [shares, reddit] = unfurls;
+    expect(queries().map((u) => u.searchParams.get('event'))).toEqual(['share unfurl', 'share unfurl']);
+    const [shares, reddit] = queries();
     expect(shares!.searchParams.has('where')).toBe(false);
     expect(reddit!.searchParams.get('where')).not.toContain('$current_url');
     expect(reddit!.searchParams.get('unit')).toBe('hour');
+    await stats();
+    expect(queries().map((u) => u.pathname)).toEqual(['/api/query/segmentation', '/api/query/segmentation', '/api/query/jql']);
   });
 
-  it('reads all of the site with no path filter, still real users only', async () => {
-    const res = await stats('?path=all');
-    expect((await res.json() as { path: string }).path).toBe('all');
-    const pageviews = calls.filter((u) => u.searchParams.get('event') === '$mp_web_page_view');
-    expect(pageviews).toHaveLength(12);
-    for (const u of pageviews) {
-      expect(u.searchParams.get('where')).not.toContain('" in properties["$current_url"]');
-      expect(u.searchParams.get('where')).toContain(realWhere);
-    }
-    expect(calls.filter((u) => u.pathname === '/api/query/events')).toHaveLength(0);
+  it('counts the filter\'s pages from the export', async () => {
+    exported = [
+      pageview('a', 1, 'https://drewhoover.com/cfb-streak-king/'),
+      pageview('b', 1, 'https://drewhoover.com/cfb-streak-king/games/'),
+      pageview('c', 1, 'https://drewhoover.com/hostile-territory/'),
+    ].join('\n');
+    const body = await (await stats('?path=cfb-streak-king')).json() as Stats;
+    expect(body.path).toBe('cfb-streak-king');
+    expect(body.totals.week).toBe(2);
+    expect(body.pages.map((p) => p.name).sort()).toEqual(['/', '/games/']);
+    expect(body.shares).toEqual([]); // the stand-in's empty series
   });
 
-  it('caches each filter apart', async () => {
+  it('asks nothing more for another filter, since every filter reads the same days', async () => {
     await stats('?path=all');
-    const first = calls.length;
+    const sent = calls.length;
     await stats('?path=all');
-    expect(calls.length).toBe(first);
-    await stats('?path=cfb-streak-king');
-    expect(calls.length).toBe(first * 2);
+    await stats('?path=hostile-territory');
+    expect(calls.length).toBe(sent);
   });
 
-  it('asks JQL who came back, once a refresh, and draws without it when it fails', async () => {
-    const res = await stats('?path=blog');
-    expect(calls.filter((u) => u.pathname === '/api/query/jql')).toHaveLength(1);
-    expect((await res.json() as { returning: unknown }).returning).toBeNull(); // the stand-in answers a series, not a list
+  it('draws without the link previews when the Query API fails, and asks again only after the retry', async () => {
+    const original = globalThis.fetch;
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => (String(input).startsWith(env.MIXPANEL_API)
+      ? (calls.push(new URL(String(input))), Promise.resolve(new Response('{"error":"boom"}', { status: 500 })))
+      : original(input, init)));
+    const body = await (await stats('?path=all')).json() as Stats;
+    expect(body.shares).toBeNull();
+    expect(body.reddit.links).toBeNull();
+    const sent = queries().length;
+    await stats('?path=all');
+    expect(queries().length).toBe(sent);
   });
 
   it('refuses a filter that is not on the list', async () => {
@@ -143,11 +167,11 @@ describe('the three numbers', () => {
     expect(m).toBeNull();
   });
 
-  it('holds its answer through the slow group refreshing', async () => {
+  it('holds its answer through the days and the previews refreshing', async () => {
     jql = [{}];
     await stats();
-    expire('slow-');
-    expire('fast-');
+    expire('events-');
+    expire('previews-');
     await stats();
     expect(measuresCalls).toBe(1);
   });
@@ -182,7 +206,7 @@ describe('a refused refresh', () => {
     const res = await stats();
     expect(res.status).toBe(503);
     expect((await res.json() as { retryAfter?: string }).retryAfter).toBeTruthy();
-    expect(calls.length).toBeLessThan(15); // the calls queued behind the first refusal never go out
+    expect(exports().length).toBeLessThan(weekDays()); // the days queued behind the first refusal never go out
     const sent = calls.length;
     expect((await stats()).status).toBe(503);
     expect(calls.length).toBe(sent);
@@ -194,7 +218,7 @@ describe('a refused refresh', () => {
     status = 429;
     const res = await stats();
     expect(res.status).toBe(200);
-    expect(res.headers.get('x-pulse-cache')).toBe('fast=stale slow=stale');
+    expect(res.headers.get('x-pulse-cache')).toMatch(/^(\S+=stale )+previews=stale$/);
     expect((await res.json() as { staleSince: string | null }).staleSince).toMatch(/^\d{4}-/);
     const sent = calls.length;
     expect((await stats()).status).toBe(200);
@@ -204,6 +228,107 @@ describe('a refused refresh', () => {
   it('says nothing is stale on a fresh answer', async () => {
     const res = await stats();
     expect((await res.json() as { staleSince: string | null }).staleSince).toBeNull();
-    expect(res.headers.get('x-pulse-cache')).toBe('fast=miss slow=miss');
+    expect(res.headers.get('x-pulse-cache')).not.toContain('stale');
+  });
+});
+
+describe('the visitors screen', () => {
+  const visitors = async (token = 'test-token') => settled(await worker.fetch(
+    new Request('https://drewhoover.com/pulse/api/visitors', { headers: { authorization: `Bearer ${token}` } }),
+    env, ctx,
+  ));
+  const utcDay = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+  const view = (device: string, minutesAgo: number) => JSON.stringify({
+    event: '$mp_web_page_view',
+    properties: {
+      time: Date.now() - minutesAgo * 60_000, distinct_id: `$device:${device}`, $device_id: device, $insert_id: `${device}${minutesAgo}`,
+      $current_url: 'https://drewhoover.com/hostile-territory/', site: 'hostile-territory',
+    },
+  });
+
+  it('asks the export for one UTC day a call, real users only, and nothing of the Query API', async () => {
+    const res = await visitors();
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(exports().length);
+    const days = exports().map((u) => u.searchParams.get('from_date'));
+    expect(days).toContain(utcDay(0));
+    expect(days).toContain(utcDay(2));
+    for (const u of exports()) {
+      expect(u.host).toBe('data.mixpanel.invalid');
+      expect(u.searchParams.get('to_date')).toBe(u.searchParams.get('from_date'));
+      expect(u.searchParams.get('where')).toBe(realWhere);
+      expect(u.searchParams.get('time_in_ms')).toBe('true');
+    }
+  });
+
+  it('answers the visitors of the last eight hours, shaped', async () => {
+    exported = [view('a', 30), view('a', 20), view('b', 5)].join('\n');
+    const body = await (await visitors()).json() as Visitors;
+    expect(body.visitors.map((v) => [v.id, v.visits[0]!.views])).toEqual([['b', 1], ['a', 2]]);
+    expect(body.arrivals.map((a) => [a.source, a.site, a.visitors])).toEqual([['direct', 'hostile territory', 2]]);
+    expect(body.staleSince).toBeNull();
+  });
+
+  it('asks again only for today once the days are cached', async () => {
+    await visitors();
+    const first = exports().length;
+    await visitors();
+    expect(exports().length).toBe(first);
+    for (const k of [...store.keys()]) if (k.includes(`/events-${utcDay(0)}`)) store.delete(k); // today's five minutes pass
+    await visitors();
+    expect(exports().length).toBe(first + 1);
+    expect(exports().at(-1)!.searchParams.get('from_date')).toBe(utcDay(0));
+  });
+
+  it('keeps its own 429 marker, so a refused export leaves the Query API asking', async () => {
+    status = 429;
+    expect((await visitors()).status).toBe(503);
+    const sent = calls.length;
+    expect((await visitors()).status).toBe(503);
+    expect(calls.length).toBe(sent); // inside the export's backoff
+    status = 200;
+    expect((await stats()).status).toBe(503);
+    expect(exports()).toHaveLength(sent);
+    expect(queries().length).toBeGreaterThan(0);
+  });
+
+  it('wants the token', async () => {
+    expect((await visitors('wrong')).status).toBe(401);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('the pages Reddit\'s visitors landed on', () => {
+  type Landed = { redditLandings: { site: string; page: string; visitors: number }[] };
+  const fromReddit = { $referrer: 'https://www.reddit.com/' };
+  const week = () => [
+    pageview('a', 2, 'https://drewhoover.com/hostile-territory/', { ...fromReddit, site: 'hostile-territory' }),
+    pageview('b', 80, 'https://drewhoover.com/hostile-territory/', { ...fromReddit, site: 'hostile-territory' }),
+    pageview('c', 50, 'https://drewhoover.com/cfb-streak-king/?c=home', { ...fromReddit, site: 'cfb-streak-king' }),
+  ].join('\n');
+
+  it('come with the numbers, a week of them, cut to the filter', async () => {
+    exported = week();
+    const all = await (await stats('?path=all')).json() as Landed;
+    expect(all.redditLandings.map((l) => [l.site, l.page, l.visitors])).toEqual([['hostile territory', '/', 2], ['streak king', '/', 1]]);
+    const streakKing = await (await stats('?path=cfb-streak-king')).json() as Landed;
+    expect(streakKing.redditLandings.map((l) => l.site)).toEqual(['streak king']);
+    expect(exports()).toHaveLength(weekDays()); // a call a UTC day, once
+  });
+
+  it('ask the export two days at a time, since it refuses a fourth call in one second', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const original = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).startsWith(env.MIXPANEL_EXPORT)) return original(input, init);
+      most = Math.max(most, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return original(input, init);
+    });
+    await stats('?path=all');
+    expect(exports()).toHaveLength(weekDays());
+    expect(most).toBe(2);
   });
 });

@@ -3,8 +3,8 @@
   "short_name": "pulse",
   "description": "Pageviews on drewhoover.com, by the hour.",
   "display": "standalone",
-  "background_color": "#0a0a0b",
-  "theme_color": "#0a0a0b",
+  "background_color": "#282127",
+  "theme_color": "#282127",
   "icons": [
     { "src": "/pulse/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/pulse/icon-512.png", "sizes": "512x512", "type": "image/png" }

@@ -30,6 +30,26 @@ export function addDays(date: string, n: number): string {
 
 export const pad2 = (n: number) => String(n).padStart(2, '0');
 
+/**
+ * The project-local date and hour of an event's time, for a week of events:
+ * the zone is read once a UTC hour, which holds for any zone whose offset is
+ * whole hours.
+ */
+export function localHours(tz: string): (at: number) => { date: string; hour: number } {
+  const HOUR_MS = 3_600_000;
+  const byHour = new Map<number, { date: string; hour: number }>();
+  return (at) => {
+    const start = at - (at % HOUR_MS);
+    let local = byHour.get(start);
+    if (!local) {
+      const { date, hour } = localNow(tz, new Date(start));
+      local = { date, hour };
+      byHour.set(start, local);
+    }
+    return local;
+  };
+}
+
 // How far the zone's clock runs ahead of UTC at `at`, in ms (EDT: -4h).
 export function offsetMs(tz: string, at: Date = new Date()): number {
   const n = localNow(tz, at);

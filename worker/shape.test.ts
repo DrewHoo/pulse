@@ -1,180 +1,48 @@
 import { describe, expect, it } from 'vitest';
 import {
-  aiName, BOT_AGENT, BOT_ID, DREW_CITY, DREW_DEVICES, outsideName, pageName, pathWhere, REAL_JQL, realWhere, redditLink,
-  shape, siteName, type Raw, type Series,
+  aiName, BOT_AGENT, BOT_ID, DREW_CITY, DREW_DEVICES, outsideName, pageName, previewsOf, REAL_JQL, realWhere, redditLink,
+  siteName, type Series,
 } from './shape';
 import { addDays, localNow } from './time';
 
-const EVENT = '$mp_web_page_view';
-const DAYS = ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11'];
+const series = (values: Record<string, Record<string, number>>): Series => ({ data: { series: [], values } });
 
-const series = (values: Record<string, Record<string, number>>, labels: string[] = DAYS): Series => ({
-  data: { series: labels, values },
-});
+const previews = previewsOf({
+  shares: series({
+    imessage: { '2026-10-09': 3, '2026-10-11': 2 },
+    discord: { '2026-10-10': 4 },
+    google: { '2026-10-11': 30 }, // a search crawler, not a share
+    'other-bot': { '2026-10-11': 12 },
+    slack: { '2026-10-08': 0 },
+  }),
+  reddit: series({
+    // a link post: pasted into the form, submitted four minutes later, then its text fetched
+    'https://drewhoover.com/cfb-streak-king/?t=texas&c=home%2Cunranked&scope=active': { '2026-10-10 21:00:00': 2, '2026-10-11 09:00:00': 1 },
+    'https://drewhoover.com/cfb-streak-king/?t=texas&amp;c=home%2Cunranked&amp;scope=active': { '2026-10-10 22:00:00': 1 },
+    // a markdown link in a comment, its closing paren caught
+    'https://drewhoover.com/cfb-streak-king/?dir=L&amp;c=ranked)': { '2026-10-11 08:00:00': 1, '2026-10-10 08:00:00': 0 },
+    'undefined': { '2026-10-11 08:00:00': 4 },
+  }),
+}, '2026-10-11');
 
-function raw(): Raw {
-  const hours: Record<string, number> = {};
-  const hoursUnique: Record<string, number> = {};
-  for (let h = 0; h < 24; h++) {
-    const hh = String(h).padStart(2, '0');
-    hours[`2026-10-10 ${hh}:00:00`] = 10 + h; // yesterday: 10..33
-    hours[`2026-10-11 ${hh}:00:00`] = h === 12 ? 999 : h; // today: 0..11, then a future bucket Mixpanel should not send
-    hoursUnique[`2026-10-10 ${hh}:00:00`] = 2;
-    hoursUnique[`2026-10-11 ${hh}:00:00`] = 1;
-  }
-  const byDay = (per: number) => Object.fromEntries(DAYS.map((d, i) => [d, per * (i + 1)]));
-  return {
-    event: EVENT,
-    hours: series({ [EVENT]: hours }, Object.keys(hours)),
-    hoursUnique: series({ [EVENT]: hoursUnique }, Object.keys(hoursUnique)),
-    days: series({ [EVENT]: byDay(100) }),
-    daysUnique: series({ [EVENT]: byDay(10) }),
-    domains: series({
-      'undefined': { '2026-10-10': 20, '2026-10-11': 7 },
-      'drewhoover.com': { '2026-10-11': 4 },
-      'www.reddit.com': { '2026-10-11': 50 }, // outside: listed by URL instead
-    }),
-    domainsUniqueToday: series({ 'undefined': { '2026-10-11': 5 }, 'drewhoover.com': { '2026-10-11': 1 } }, ['2026-10-11']),
-    urls: series({
-      'https://www.google.com/': { '2026-10-10': 5, '2026-10-11': 3 },
-      'https://google.com/': { '2026-10-11': 2 },
-      'https://old.reddit.com/r/rolltide/comments/1x1km4m/thread/': { '2026-10-09': 40 },
-      'https://nothing.example/': { '2026-10-09': 0 },
-    }),
-    urlsUniqueToday: series({
-      'https://www.google.com/': { '2026-10-11': 2 },
-      'https://google.com/': { '2026-10-11': 1 },
-    }, ['2026-10-11']),
-    pages: series({
-      '/cfb-streak-king/': { '2026-10-11': 9 },
-      '/cfb-streak-king/games/': { '2026-10-10': 4, '2026-10-11': 9 },
-    }),
-    pagesUniqueToday: series({ '/cfb-streak-king/': { '2026-10-11': 3 }, '/cfb-streak-king/games/': { '2026-10-11': 6 } }, ['2026-10-11']),
-    shares: series({
-      imessage: { '2026-10-09': 3, '2026-10-11': 2 },
-      discord: { '2026-10-10': 4 },
-      google: { '2026-10-11': 30 }, // a search crawler, not a share
-      'other-bot': { '2026-10-11': 12 },
-      slack: { '2026-10-08': 0 },
-    }),
-    ai: series({
-      'chatgpt.com': { '2026-10-10': 13, '2026-10-11': 2 },
-      perplexity: { '2026-10-11': 3 },
-      'perplexity.ai': { '2026-10-09': 1 }, // a referrer, no tag: the same row
-      newsletter: { '2026-10-11': 8 },      // a tag, but not an assistant
-    }),
-    aiUniqueToday: series({ 'chatgpt.com': { '2026-10-11': 1 }, perplexity: { '2026-10-11': 1 } }, ['2026-10-11']),
-    returning: { today: 4, week: 9, weekVisitors: 120 },
-    reddit: series({
-      // a link post: pasted into the form, submitted four minutes later, then its text fetched
-      'https://drewhoover.com/cfb-streak-king/?t=texas&c=home%2Cunranked&scope=active': { '2026-10-10 21:00:00': 2, '2026-10-11 09:00:00': 1 },
-      'https://drewhoover.com/cfb-streak-king/?t=texas&amp;c=home%2Cunranked&amp;scope=active': { '2026-10-10 22:00:00': 1 },
-      // a markdown link in a comment, its closing paren caught
-      'https://drewhoover.com/cfb-streak-king/?dir=L&amp;c=ranked)': { '2026-10-11 08:00:00': 1, '2026-10-10 08:00:00': 0 },
-      'undefined': { '2026-10-11 08:00:00': 4 },
-    }, []),
-  };
-}
-
-const NOW = { date: '2026-10-11', hour: 11, minute: 38, tz: 'America/New_York' };
-
-describe('shape', () => {
-  const s = shape(raw(), NOW, 'cfb-streak-king', new Date('2026-10-11T15:38:00Z'));
-
-  it('cuts today at the current hour and keeps all of yesterday', () => {
-    expect(s.hours.today.slice(0, 12)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
-    expect(s.hours.today.slice(12).every((n) => n === null)).toBe(true);
-    expect(s.hours.todayVisitors.slice(0, 12).every((n) => n === 1)).toBe(true);
-    expect(s.hours.todayVisitors[12]).toBeNull();
-    expect(s.hours.yesterday).toHaveLength(24);
-    expect(s.hours.yesterday[23]).toBe(33);
-    expect(s.hours.yesterdayVisitors[0]).toBe(2);
-  });
-
-  it('totals views and visitors', () => {
-    expect(s.totals).toEqual({
-      thisHour: 11,
-      thisHourVisitors: 1,
-      lastHour: 10,
-      lastHourVisitors: 1,
-      today: 66,
-      todayVisitors: 70,
-      todayVisitorHours: 12,
-      yesterdayToHour: 10 * 12 + 66,
-      yesterdayVisitorHoursToHour: 24,
-      yesterday: 10 * 24 + 276,
-      yesterdayVisitors: 60,
-      week: 2800,
-      weekVisitorsPerDay: 40,
-    });
-  });
-
-  it('reads last hour from yesterday at midnight', () => {
-    const t = shape(raw(), { ...NOW, hour: 0 }).totals;
-    expect(t.lastHour).toBe(33);
-    expect(t.today).toBe(0);
-  });
-
-  it('lists direct and internal from the domains, outside referrers by URL, merged by name', () => {
-    expect(s.referrers).toEqual([
-      { name: '(direct)', today: 7, visitors: 5, week: 27 },
-      { name: 'google.com', today: 5, visitors: 3, week: 10 },
-      { name: 'drewhoover.com', today: 4, visitors: 1, week: 4 },
-      { name: 'old.reddit.com/r/rolltide/comments/1x1km4m/thread', today: 0, visitors: 0, week: 40 },
-    ]);
-  });
-
-  it('ranks pages by today\'s visitors, without the filter\'s own path', () => {
-    expect(s.pages).toEqual([
-      { name: '/games/', today: 9, visitors: 6, week: 13 },
-      { name: '/', today: 9, visitors: 3, week: 9 },
-    ]);
-  });
-
-  it('passes who came back through, or null when the query failed', () => {
-    expect(s.returning).toEqual({ today: 4, week: 9, weekVisitors: 120 });
-    expect(shape({ ...raw(), returning: null }, NOW).returning).toBeNull();
-  });
-
+describe('the link previews', () => {
   it('lists link previews by chat or social app, without the crawlers', () => {
-    expect(s.shares).toEqual([
+    expect(previews.shares).toEqual([
       { name: 'iMessage', today: 2, week: 5 },
       { name: 'Discord', today: 0, week: 4 },
     ]);
   });
 
-  it('lists AI assistants by tag or referrer, one row each, and nothing else', () => {
-    expect(s.ai).toEqual([
-      { name: 'Perplexity', today: 3, visitors: 1, week: 4 },
-      { name: 'ChatGPT', today: 2, visitors: 1, week: 15 },
-    ]);
-  });
-
-  it('counts every reddit-referred view as one row', () => {
-    expect(s.reddit.views).toEqual({ name: 'reddit', today: 50, visitors: 0, week: 50 });
-  });
-
   it('lists the links Reddit fetched, a fetch within two hours of the last one the same lead', () => {
-    expect(s.reddit.links).toEqual([
+    expect(previews.redditLinks).toEqual([
       { at: '2026-10-11 09', url: 'https://drewhoover.com/cfb-streak-king/?t=texas&c=home%2Cunranked&scope=active', crawler: 1, text: 0 },
       { at: '2026-10-11 08', url: 'https://drewhoover.com/cfb-streak-king/?dir=L&c=ranked', crawler: 0, text: 1 },
       { at: '2026-10-10 21', url: 'https://drewhoover.com/cfb-streak-king/?t=texas&c=home%2Cunranked&scope=active', crawler: 2, text: 1 },
     ]);
   });
-
-  it('lists the seven days in order with visitors', () => {
-    expect(s.days.map((d) => d.n)).toEqual([100, 200, 300, 400, 500, 600, 700]);
-    expect(s.days[6]).toEqual({ date: '2026-10-11', n: 700, visitors: 70 });
-  });
 });
 
-describe('pathWhere', () => {
-  it('filters a site to its URL from the host on, and all to nothing', () => {
-    expect(pathWhere('cfb-streak-king')).toBe('"drewhoover.com/cfb-streak-king/" in properties["$current_url"]');
-    expect(pathWhere('blog')).toBe('"drewhoover.com/blog/" in properties["$current_url"]');
-    expect(pathWhere('breathing-index')).toBe('"breathingindex.com/" in properties["$current_url"]');
-    expect(pathWhere('all')).toBeUndefined();
-  });
+describe('pageName', () => {
   it('drops the filter\'s path from a page, and only a whole segment of it', () => {
     expect(pageName('/cfb-streak-king/', 'cfb-streak-king')).toBe('/');
     expect(pageName('/cfb-streak-king/games/week/7/', 'cfb-streak-king')).toBe('/games/week/7/');
@@ -184,10 +52,6 @@ describe('pathWhere', () => {
     expect(pageName('/intro', 'breathing-index')).toBe('/intro');
     expect(pageName('/cfb-streak-king/', 'all')).toBe('/cfb-streak-king/');
     expect(pageName('undefined', 'blog')).toBe('(no path)');
-  });
-  it('carries the filter on the answer', () => {
-    expect(shape(raw(), NOW, 'cfb-streak-king').path).toBe('cfb-streak-king');
-    expect(shape(raw(), NOW).path).toBe('all');
   });
 });
 
@@ -276,17 +140,5 @@ describe('Putting Up Numbers', () => {
     expect(siteName('breathing-index')).toBe('breathingindex.com');
     expect(siteName('cfb-streak-king')).toBe('drewhoover.com');
     expect(siteName('all')).toBe('drewhoover.com');
-  });
-
-  it('lists its sports by visitors, the home for a page with none', () => {
-    const r = raw();
-    r.sports = series({ cfb: { '2026-10-11': 30 }, nfl: { '2026-10-10': 9, '2026-10-11': 4 }, undefined: { '2026-10-11': 2 } });
-    r.sportsUniqueToday = series({ cfb: { '2026-10-11': 12 }, nfl: { '2026-10-11': 3 }, undefined: { '2026-10-11': 2 } }, ['2026-10-11']);
-    expect(shape(r, NOW, 'puttingupnumbers').sports).toEqual([
-      { name: 'college football', today: 30, visitors: 12, week: 30 },
-      { name: 'NFL', today: 4, visitors: 3, week: 13 },
-      { name: 'home', today: 2, visitors: 2, week: 2 },
-    ]);
-    expect(shape(raw(), NOW, 'cfb-streak-king').sports).toEqual([]);
   });
 });

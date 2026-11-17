@@ -1,122 +1,211 @@
 import './styles.css';
-import { ago, render, renderMessage } from './render';
+import { ago, isScreen, render, renderMessage, type Screen } from './render';
+import { landingAt, renderVisitors, type VisitorsView } from './visitors';
 import { DEFAULT_PATH, isPathKey, type PathKey } from '../worker/shape';
-import type { Stats } from './stats';
+import type { Stats, Visitors } from './stats';
 
 // The page is a static shell on GitHub Pages. Everything it shows comes from
-// the worker at ./api/stats, gated by a bearer token. The token arrives once
-// in the URL (?k=…), stays there so an iOS "Add to Home Screen" bookmark keeps
+// the worker at ./api/, gated by a bearer token. The token arrives once in
+// the URL (?k=…), stays there so an iOS "Add to Home Screen" bookmark keeps
 // it (the installed app gets its own storage, separate from Safari's), and is
 // mirrored to localStorage as a fallback for a bookmark that lost its query.
 //
-// The path picker (?p=) works the same way: the URL carries the choice, and
-// localStorage remembers it for a bookmark without one. Each filter keeps its
-// own last answer, so switching paints numbers at once and then refreshes.
+// The page has two screens, the numbers and the visitors (?v=visitors), and
+// polls only the one it shows. The numbers screen's path picker (?p=) and the
+// visitors screen's opened card (?d=) ride in the URL the same way, and
+// localStorage remembers the screen and the path for a bookmark without them.
+// Each screen and each path filter keeps its own last answer, so switching
+// paints at once and then refreshes.
 
-const API = `${import.meta.env.BASE_URL}api/stats`;
+const API = `${import.meta.env.BASE_URL}api/`;
 const TOKEN_KEY = 'pulse.token';
+const SCREEN_KEY = 'pulse.screen';
 const PATH_KEY = 'pulse.path';
-const LAST_KEY = 'pulse.last.v5'; // versioned with the stats shape, so an old cached answer is not painted
+const LAST_KEY = 'pulse.last.v5';         // versioned with the stats shape, so an old cached answer is not painted
+const VISITORS_KEY = 'pulse.visitors.v1'; // and this with the visitors shape
 const REFRESH_MS = 5 * 60 * 1000;
 const STALE_MS = 60 * 1000;
 
 const root = document.getElementById('app')!;
-let stats: Stats | null = null;
-let fetchedLocal = 0;
-let inflight: Promise<void> | null = null;
 
 const store = {
   get(k: string) { try { return localStorage.getItem(k); } catch { return null; } },
-  set(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+  set(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode, or full */ } },
 };
+function stored<T>(k: string): T | null {
+  const last = store.get(k);
+  if (!last) return null;
+  try { return JSON.parse(last) as T; } catch { return null; }
+}
+
+const param = (name: string) => new URLSearchParams(location.search).get(name);
+
+// Sets or clears query parameters in place, keeping the token and the rest.
+function setParams(changes: Record<string, string | null>) {
+  const q = new URLSearchParams(location.search);
+  for (const [name, v] of Object.entries(changes)) {
+    if (v === null) q.delete(name); else q.set(name, v);
+  }
+  const search = q.toString();
+  history.replaceState(null, '', `${location.pathname}${search ? `?${search}` : ''}${location.hash}`);
+}
+
+// In dev, Vite's proxy sends the token (vite.config.ts), so the page asks without one.
+const PROXY_SENDS_TOKEN = 'dev';
 
 function token(): string | null {
-  const fromUrl = new URLSearchParams(location.search).get('k');
+  const fromUrl = param('k');
   if (fromUrl) { store.set(TOKEN_KEY, fromUrl); return fromUrl; }
-  return store.get(TOKEN_KEY);
+  return store.get(TOKEN_KEY) ?? (import.meta.env.DEV ? PROXY_SENDS_TOKEN : null);
+}
+
+function initialScreen(): Screen {
+  const fromUrl = param('v');
+  if (isScreen(fromUrl)) return fromUrl;
+  const saved = store.get(SCREEN_KEY);
+  return isScreen(saved) ? saved : 'numbers';
 }
 
 function initialPath(): PathKey {
-  const fromUrl = new URLSearchParams(location.search).get('p');
+  const fromUrl = param('p');
   if (isPathKey(fromUrl)) return fromUrl;
   const saved = store.get(PATH_KEY);
   return isPathKey(saved) ? saved : DEFAULT_PATH;
 }
 
+let screen: Screen = initialScreen();
 let path: PathKey = initialPath();
 const lastKey = (p: PathKey) => `${LAST_KEY}.${p}`;
+let stats: Stats | null = stored<Stats>(lastKey(path));
+let visitors: Visitors | null = stored<Visitors>(VISITORS_KEY);
+// A desktop's width. The visitors screen then reads as columns, the opened
+// visitor in a pane of its own (styles.css, `main.wide`).
+const desktop = matchMedia('(min-width: 1000px)');
+const view: VisitorsView = { site: null, landing: null, open: param('d'), wide: desktop.matches };
 
-function loadLast(p: PathKey): Stats | null {
-  const last = store.get(lastKey(p));
-  if (!last) return null;
-  try { return JSON.parse(last) as Stats; } catch { return null; }
+let fetchedLocal = 0;
+let inflight: Promise<void> | null = null;
+
+// What a fetch is for. An answer for a screen or a filter the page has since left is dropped.
+const showing = () => (screen === 'numbers' ? `numbers ${path}` : 'visitors');
+const answer = () => (screen === 'numbers' ? stats : visitors);
+
+function html(note: string): string {
+  if (screen === 'visitors') return visitors ? renderVisitors(visitors, view, note) : renderMessage(screen, 'pulse', note || 'loading…');
+  return stats ? render(stats, note, path) : renderMessage(screen, 'pulse', note || 'loading…', path);
 }
 
-function choose(next: PathKey) {
-  if (next === path) return;
-  path = next;
-  store.set(PATH_KEY, next);
-  const q = new URLSearchParams(location.search);
-  if (next === DEFAULT_PATH) q.delete('p'); else q.set('p', next);
-  const search = q.toString();
-  history.replaceState(null, '', `${location.pathname}${search ? `?${search}` : ''}${location.hash}`);
-  stats = loadLast(next);
+// A repaint replaces the whole screen, so it puts back what the reader had: a
+// list they opened (a card's events, an arrivals row), and how far down the
+// desktop's pane they were, if it still shows the same visitor.
+function paint(note = '') {
+  const keys = (selector: string) => [...root.querySelectorAll<HTMLDetailsElement>(selector)].map((d) => d.dataset.key);
+  const open = new Set(keys('details[open][data-key]'));
+  const paneOf = () => root.querySelector<HTMLElement>('.pane');
+  const before = { id: paneOf()?.dataset.id, scrollTop: paneOf()?.scrollTop ?? 0 }; // read now: a removed element scrolls to 0
+  root.classList.toggle('wide', view.wide);
+  root.innerHTML = html(note);
+  for (const d of root.querySelectorAll<HTMLDetailsElement>('details[data-key]')) d.open = open.has(d.dataset.key);
+  const pane = paneOf();
+  if (pane && pane.dataset.id === before.id) pane.scrollTop = before.scrollTop;
+}
+
+// After the screen or the path changed: paint its last answer, then fetch.
+function repaintAndFetch() {
   fetchedLocal = 0;
   paint();
   void refresh(true);
 }
 
-function paint(note = '') {
-  if (stats) root.innerHTML = render(stats, note, path);
-  else root.innerHTML = renderMessage('pulse', note || 'loading…', path);
-  document.getElementById('refresh')?.addEventListener('click', () => void refresh(true));
-  root.querySelectorAll<HTMLButtonElement>('[data-path]').forEach((b) =>
-    b.addEventListener('click', () => { const p = b.dataset.path ?? null; if (isPathKey(p)) choose(p); }));
+function showScreen(next: Screen) {
+  if (next === screen) return;
+  screen = next;
+  store.set(SCREEN_KEY, next);
+  setParams({ v: next === 'numbers' ? null : next });
+  repaintAndFetch();
 }
+
+function choosePath(next: PathKey) {
+  if (next === path) return;
+  path = next;
+  store.set(PATH_KEY, next);
+  setParams({ p: next === DEFAULT_PATH ? null : next });
+  stats = stored<Stats>(lastKey(next));
+  repaintAndFetch();
+}
+
+// A tap on a card's head opens it, and a tap on the open one closes it.
+function toggleCard(id: string) {
+  view.open = view.open === id ? null : id;
+  setParams({ d: view.open });
+  paint();
+}
+
+// Every tap the two screens wire, by the attribute on what was tapped.
+root.addEventListener('click', (e) => {
+  const tapped = (e.target as Element).closest<HTMLElement>('#refresh, [data-screen], [data-path], [data-site], [data-landing], [data-open]');
+  if (!tapped) return;
+  const { site, landing, open } = tapped.dataset;
+  const toScreen = tapped.dataset.screen ?? null;
+  const toPath = tapped.dataset.path ?? null;
+  if (tapped.id === 'refresh') void refresh(true);
+  else if (isScreen(toScreen)) showScreen(toScreen);
+  else if (isPathKey(toPath)) choosePath(toPath);
+  else if (site !== undefined) { view.site = site || null; paint(); }
+  else if (landing !== undefined) { view.landing = visitors && landing ? landingAt(visitors, landing) : null; paint(); }
+  else if (open !== undefined) toggleCard(open);
+});
 
 async function refresh(force = false): Promise<void> {
   if (inflight) return inflight;
   if (!force && Date.now() - fetchedLocal < STALE_MS) return;
   const k = token();
   if (!k) {
-    root.innerHTML = renderMessage('no token', 'open this page once with ?k=<token> in the URL, then add it to the home screen from that address.');
+    root.innerHTML = renderMessage(screen, 'no token', 'open this page once with ?k=<token> in the URL, then add it to the home screen from that address.');
     return;
   }
-  const want = path;
+  const want = showing();
+  const url = screen === 'numbers' ? `${API}stats?path=${encodeURIComponent(path)}` : `${API}visitors`;
+  const failed = (title: string, why: string, note: string) => {
+    if (answer()) paint(note);
+    else root.innerHTML = renderMessage(screen, title, why, path);
+  };
   inflight = (async () => {
     try {
-      const res = await fetch(`${API}?path=${encodeURIComponent(want)}`, {
-        headers: { authorization: `Bearer ${k}` }, cache: 'no-store',
-      });
+      const res = await fetch(url, { headers: { authorization: `Bearer ${k}` }, cache: 'no-store' });
       const body = await res.json().catch(() => ({}));
-      if (want !== path) return; // the picker moved on while this was in flight
+      if (want !== showing()) return; // the page moved on while this was in flight
       if (!res.ok) {
         const why = typeof body?.error === 'string' ? body.error : `${res.status} ${res.statusText}`;
-        if (stats) paint(`refresh failed: ${why}`);
-        else root.innerHTML = renderMessage(res.status === 401 ? 'token rejected' : 'no data', why, path);
+        failed(res.status === 401 ? 'token rejected' : 'no data', why, `refresh failed: ${why}`);
         return;
       }
-      stats = body as Stats;
+      if (screen === 'numbers') {
+        stats = body as Stats;
+        store.set(lastKey(path), JSON.stringify(stats));
+      } else {
+        visitors = body as Visitors;
+        store.set(VISITORS_KEY, JSON.stringify(visitors));
+      }
       fetchedLocal = Date.now();
-      store.set(lastKey(want), JSON.stringify(stats));
       paint();
     } catch (e) {
-      if (want !== path) return;
+      if (want !== showing()) return;
       const why = e instanceof Error ? e.message : String(e);
-      if (stats) paint(`offline: ${why}`);
-      else root.innerHTML = renderMessage('offline', why, path);
+      failed('offline', why, `offline: ${why}`);
     } finally {
       inflight = null;
-      if (want !== path) void refresh(true); // fetch the filter that is showing now
+      if (want !== showing()) void refresh(true); // fetch what is showing now
     }
   })();
   return inflight;
 }
 
-// First paint from the last answer, so the installed app opens on numbers,
-// then the network replaces them.
-stats = loadLast(path);
-if (stats) paint();
+desktop.addEventListener('change', () => { view.wide = desktop.matches; paint(); });
+
+// First paint from the last answer, so the installed app opens on numbers or
+// cards, then the network replaces them.
+paint();
 void refresh(true);
 
 setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, REFRESH_MS);
@@ -124,6 +213,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('focus', () => void refresh());
 window.addEventListener('pageshow', () => void refresh());
 setInterval(() => {
+  const shown = answer();
   const el = document.getElementById('ago');
-  if (el && stats) el.textContent = ago(stats.fetchedAt);
+  if (el && shown) el.textContent = ago(shown.fetchedAt);
 }, 15 * 1000);

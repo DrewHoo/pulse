@@ -2,3 +2,4 @@
 // re-exporting its types, so a shape change fails typecheck on both sides.
 export type { Stats, Row, ShareRow, RedditRow } from '../worker/shape';
 export type { Measures, MeasureWindow, Tally } from '../worker/measures';
+export type { Arrival, EventTotal, Landing, PageSeen, SourceLanding, Visit, Visitor, Visitors } from '../worker/visitors';

@@ -1,13 +1,20 @@
+/* The colors are Putting Up Numbers' default theme (its site/src/styles.css):
+   the plum field, cream words, and rust, sky and gold. On the visitors screen
+   each of the three has one job: rust is the site, sky is where a visit came
+   from and went, gold is a count or an event (specs/visitors.spec.md, "Color"). */
 :root {
   color-scheme: dark;
-  --bg: #0a0a0b;
-  --fg: #f2f2f3;
-  --mute: #8d8d93;
-  --dim: #1c1c20;
-  --line: #26262b;
-  --ghost: #34343a;
-  --bar: #e4e4e8;
-  --accent: #ffb340;
+  --bg: #282127;
+  --fg: #efe6d9;
+  --mute: #bfb2a6;
+  --dim: #332b32;
+  --line: #453a42;
+  --ghost: #5f525b;
+  --bar: #efe6d9;
+  --hi: #e0844a;   /* rust, lighter than PUN's #c36c36 so 13px words clear 4.5:1 on the plum */
+  --hi2: #8fbcd0;  /* sky */
+  --hi3: #d8c27a;  /* gold */
+  --accent: var(--hi3);
   --up: #6fd38a;
   --down: #ff7b72;
   --num: ui-rounded, -apple-system, system-ui, sans-serif;
@@ -33,19 +40,23 @@ main { max-width: 480px; margin: 0 auto; }
 
 h1, h2 { margin: 0; font-weight: 600; }
 
+button { font: inherit; color: inherit; }
+
 .top {
   display: flex; justify-content: space-between; align-items: baseline;
-  padding: 2px 0 8px; cursor: pointer; user-select: none; -webkit-user-select: none;
+  padding: 2px 0 8px; user-select: none; -webkit-user-select: none;
 }
-.top h1 { font-size: 14px; letter-spacing: 0.01em; }
-.asof { color: var(--mute); font-size: 12px; }
+.screens { display: flex; gap: 14px; }
+.screens button { font-size: 14px; color: var(--mute); background: none; border: 0; padding: 0; cursor: pointer; }
+.screens button.on { color: var(--fg); font-weight: 600; }
+.asof { color: var(--mute); font-size: 12px; background: none; border: 0; padding: 0; cursor: pointer; }
 
 .paths { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px; }
 .paths button {
-  font: inherit; font-size: 12px; color: var(--mute); background: var(--dim);
+  font-size: 12px; color: var(--mute); background: var(--dim);
   border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer;
 }
-.paths button.on { color: var(--bg); background: var(--fg); border-color: var(--fg); }
+.paths button.on { color: var(--bg); background: var(--hi); border-color: var(--hi); }
 
 .note {
   margin: 0 0 8px; padding: 6px 8px; border-radius: 6px;
@@ -68,12 +79,14 @@ h1, h2 { margin: 0; font-weight: 600; }
 }
 .hero .big b { font-size: 56px; color: var(--accent); }
 
-.bars { display: block; width: 100%; height: 76px; }
+.hours { position: relative; }
+.bars { display: block; width: 100%; height: 62px; }
 .bars rect.ghost { fill: var(--ghost); }
 .bars rect.today { fill: var(--bar); }
 .bars rect.now { fill: var(--accent); }
-.bars text { fill: var(--mute); font-size: 9px; font-family: -apple-system, system-ui, sans-serif; }
-.bars text.peak { fill: var(--ghost); }
+.hours .peak { position: absolute; top: 0; right: 0; color: var(--ghost); font-size: 9px; }
+.ticks { position: relative; height: 14px; color: var(--mute); font-size: 9px; }
+.ticks span { position: absolute; top: 2px; padding-left: 1px; }
 
 .strip {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
@@ -97,7 +110,7 @@ h1, h2 { margin: 0; font-weight: 600; }
 .list h2 { font-size: 12px; color: var(--fg); }
 .row { position: relative; padding: 3px 2px; font-size: 13px; }
 .row .name { position: relative; isolation: isolate; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .name i { position: absolute; left: -2px; top: -1px; bottom: -1px; background: var(--dim); border-radius: 3px; z-index: -1; }
+.row .name .bar { position: absolute; left: -2px; top: -1px; bottom: -1px; background: var(--dim); border-radius: 3px; z-index: -1; }
 .list .n, .list .v, .list .w { text-align: right; }
 .row .n { font-family: var(--num); font-weight: 600; }
 .row .v { color: var(--mute); font-size: 12px; }
@@ -107,6 +120,11 @@ h1, h2 { margin: 0; font-weight: 600; }
 .measures header, .measures .row { grid-template-columns: 1fr 50px 50px 72px; }
 .measures .row.sub .name { padding-left: 10px; color: var(--mute); font-size: 12px; }
 .measures .row.sub .n { color: var(--mute); font-weight: 400; font-size: 12px; }
+.list h3.cols, .row.landed { display: grid; grid-template-columns: 1fr 34px 52px; gap: 6px; align-items: baseline; }
+.landed .name { white-space: normal; word-break: break-all; } /* a link is one long word: it breaks where the line ends */
+.landed a { color: inherit; text-decoration: none; }
+.landed .site { color: var(--mute); }
+.landed .w { white-space: nowrap; font-size: 12px; }
 .row.lead { grid-template-columns: 1fr auto 44px; }
 .row.lead a { color: inherit; text-decoration: none; }
 .row.lead .k { color: var(--accent); font-size: 11px; white-space: nowrap; }
@@ -118,6 +136,115 @@ h1, h2 { margin: 0; font-weight: 600; }
 .message { padding: 24px 0; color: var(--mute); }
 .message h2 { color: var(--fg); font-size: 16px; margin-bottom: 6px; }
 .message p { margin: 0; word-break: break-word; }
+
+/* The visitors screen */
+.dot { color: var(--ghost); }
+.src { color: var(--hi2); }
+.x { color: var(--mute); font-size: 11px; margin-left: 2px; }
+mark { background: none; color: var(--hi); font-size: 11px; margin-left: 4px; }
+q { quotes: none; color: var(--mute); font-size: 12px; margin-left: 3px; }
+summary { cursor: pointer; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+.more { color: var(--mute); font-size: 11px; padding: 3px 2px; }
+
+.lede { margin: 0 0 8px; color: var(--mute); font-size: 12px; }
+.lede b { color: var(--hi3); font: 600 22px/1 var(--num); margin-right: 5px; }
+
+.arrivals { margin-bottom: 12px; }
+.arrivals header, .arrivals .row { grid-template-columns: 1fr 34px 40px; }
+.arrivals .row .n { color: var(--hi3); }
+.arrival[open] > summary .name { white-space: normal; }
+.landing { width: 100%; background: none; border: 0; text-align: left; cursor: pointer; padding-left: 14px; font-size: 12px; }
+.landing .n { color: var(--mute); font-weight: 400; }
+
+.people > h2 { font-size: 12px; padding: 0 2px 4px; border-bottom: 1px solid var(--line); }
+.narrowed {
+  display: block; margin: 6px 0 0; font-size: 12px; color: var(--mute); background: var(--dim);
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer;
+}
+.who { padding: 7px 2px 8px; border-bottom: 1px solid var(--line); }
+.head { display: block; width: 100%; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+.head > span { display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.head .first { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 0; }
+.head .site { font-size: 13px; font-weight: 600; color: var(--hi); overflow: hidden; text-overflow: ellipsis; }
+.head .when { color: var(--mute); font-size: 12px; white-space: nowrap; }
+.head .when b { color: var(--fg); font-family: var(--num); font-weight: 600; }
+.head .meta { color: var(--mute); font-size: 12px; }
+.head .pages { font-size: 13px; }
+.head .pages b { font-weight: 500; }
+.head .did { color: var(--mute); font-size: 12px; }
+.head em { font-style: normal; color: var(--fg); opacity: 0.9; }
+/* a one-page visit is out of rust, so the color marks the visits that did something */
+.who.one-page .site { color: var(--mute); font-weight: 400; }
+.who.one-page .pages { color: var(--mute); }
+.who.open {
+  background: var(--dim); margin: 0 -8px; padding: 7px 8px 10px 6px;
+  border-left: 2px solid var(--hi); border-bottom: 0; border-radius: 0 8px 8px 0;
+}
+
+.detail { margin-top: 3px; font-size: 12px; }
+.detail .facts { margin: 0; color: var(--mute); opacity: 0.8; }
+.detail h4, .detail details > summary {
+  margin: 10px 0 2px; padding-top: 7px; border-top: 1px solid var(--line);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+}
+.detail h4 span { color: var(--mute); font-weight: 400; margin-left: 4px; }
+.detail details > summary { color: var(--mute); }
+.detail details > summary::before { content: '▸ '; }
+.detail details[open] > summary::before { content: '▾ '; }
+.pg { display: flex; align-items: baseline; gap: 6px; font-size: 13px; padding-top: 3px; }
+.pg a { color: var(--fg); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pg small { color: var(--hi2); font-size: 10px; white-space: nowrap; }
+.pg small.site { color: var(--hi); }
+.pg > span { color: var(--mute); margin-left: auto; padding-left: 6px; }
+.states { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; margin: 2px 0 2px 10px; }
+.states > span { color: var(--ghost); font-size: 10px; }
+.states a { color: var(--mute); font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; text-decoration: none; }
+.total { display: grid; grid-template-columns: auto auto 1fr; gap: 6px; padding: 2px 0; }
+.total b { font-weight: 500; color: var(--hi3); }
+.total span { color: var(--mute); }
+.total em { font-style: normal; color: var(--fg); opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev { display: grid; grid-template-columns: 50px 76px 1fr; gap: 6px; padding: 1.5px 0; font-size: 11px; }
+.ev time { color: var(--ghost); }
+.ev b { font-weight: 500; color: var(--hi3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev.view b { color: var(--mute); }
+.ev span { color: var(--fg); opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev.passing { opacity: 0.4; }
+
+/* A desktop (main.ts sets `wide` at 1000px): the visitors screen as columns.
+   Arrivals over the cards on the left and the opened visitor in a pane on the
+   right; from 1280px Arrivals is a column of its own. The page scrolls the
+   cards, and the pane keeps its place and scrolls itself. */
+main.wide { max-width: 1320px; }
+.wide .columns { display: grid; grid-template-columns: minmax(360px, 440px) minmax(0, 1fr); gap: 0 28px; align-items: start; }
+.wide .arrivals, .wide .people { grid-column: 1; }
+.wide .who:hover { background: var(--dim); }
+.wide .pane {
+  grid-column: 2; grid-row: 1 / span 2; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto;
+  background: var(--dim); border-left: 2px solid var(--hi); border-radius: 0 8px 8px 0; padding: 12px 16px 16px 14px;
+}
+.wide .pane.nobody { border-left-color: var(--line); color: var(--mute); font-size: 13px; }
+.pane .head { cursor: default; }
+.pane .head .site { font-size: 15px; }
+.pane .detail { font-size: 13px; }
+.pane .pg { font-size: 14px; }
+.pane .ev { grid-template-columns: 62px 120px 1fr; font-size: 12px; padding: 2px 0; }
+/* The numbers screen on a desktop: three columns. Today's numbers take two of
+   them, so the hours read wide, and beside them sits Putting Up Numbers' three
+   numbers, or on another filter the first list. The lists follow three to a row. */
+.wide .numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px 28px; align-items: start; grid-auto-flow: dense; }
+.wide .numbers .today { grid-column: span 2; }
+.wide .numbers .lists { display: contents; }
+.wide .numbers .measures { margin: 0; }
+.wide .bars { height: 110px; }
+.wide .ticks, .wide .hours .peak { font-size: 11px; }
+.wide .day { grid-template-rows: 14px 44px 14px; }
+@media (min-width: 1280px) {
+  .wide .columns { grid-template-columns: 300px minmax(380px, 440px) minmax(0, 1fr); }
+  .wide .arrivals { grid-row: 1; position: sticky; top: 12px; }
+  .wide .people { grid-column: 2; grid-row: 1; }
+  .wide .pane { grid-column: 3; grid-row: 1; }
+}
 
 @media (min-width: 480px) {
   .lists { grid-template-columns: 1fr 1fr; gap: 16px; }
