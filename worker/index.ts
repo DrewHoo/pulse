@@ -319,7 +319,7 @@ const visitors: Route = async (_url, env, ctx) => {
   try {
     const days = await eventsByDay(ctx, env, exportDays(at));
     return json(
-      { ...visitorsOf(days.events, env.PAGEVIEW_EVENT, at), staleSince: days.staleSince },
+      { ...visitorsOf(days.events, env.PAGEVIEW_EVENT, env.MIXPANEL_TZ, at), staleSince: days.staleSince },
       200, { 'x-pulse-cache': days.cache },
     );
   } catch (e) {

@@ -1,6 +1,6 @@
 # Pulse: who's here and what they did
 
-Started 2026-11-17. Status: chunks 1 to 4 built 2026-11-17 (Drew: "LGTM, implement it!"), each decision at its lean, and the numbers screen moved onto the export the same day ("The numbers on the day files"). Chunk 5 is parked. "What the build changed" at the end lists where the code differs from what was written first.
+Started 2026-11-17. Status: chunks 1 to 4 built 2026-11-17 (Drew: "LGTM, implement it!"), each decision at its lean, and the numbers screen moved onto the export the same day ("The numbers on the day files"). Later that day the window became today since midnight ET, at Drew's word ("What the build changed"). Chunk 5 is parked. "What the build changed" at the end lists where the code differs from what was written first.
 
 Pulse counts visitors. It can't say what one of them did. For that Drew opens Mixpanel's Events tab, filters out bots and himself, and reads the rows. This spec puts that on the phone as a second screen: the visitors of the last eight hours, latest first, each with where they came from and a few lines of what they did, and the events behind those lines one tap away.
 
@@ -118,7 +118,7 @@ A one-page visit's site name is small-print cream, so rust marks the visits that
 1. Export or JQL. My lean is the export, for its own hourly limit and because JQL is in maintenance mode. The price is whole UTC days of events for an eight-hour window, about 1 MB a day today.
 2. How long the answer is cached. My lean is 300 seconds like the hourly series, 12 calls an hour. If the check below says the export's limit is its own, 120 seconds is affordable.
 3. Whether the export's 60 is separate from the Query API's 60. The docs list them apart and don't say. The check is an hour with both screens polling and a count of 429s. If they share, the visitors screen takes the numbers screen's place in the budget, since the page polls only the screen it shows.
-4. The window. My lean is eight hours fixed, as asked. `?hours=` is one line later if 24 turns out to be the question at breakfast.
+4. The window. My lean is eight hours fixed, as asked. `?hours=` is one line later if 24 turns out to be the question at breakfast. (Since 2026-11-17 it's today since midnight ET.)
 5. A cap. My lean is 300 events a visitor in the answer, with the count of the rest. Today's busiest had 131.
 
 **The cheap, fast version.** The worker passes the export through with Mixpanel's properties dropped and the page does the grouping. That's less worker code and the same screen, but the shaping can't be tested where `shape.test.ts` tests everything else.
@@ -230,7 +230,7 @@ The numbers screen got its own the same day (Drew wants Pulse as his own Mixpane
 
 ## 4. Arrivals
 
-The table at the top of `specs/visitors/list.png`. One row a source and site: the window's visitors, and the same eight hours yesterday.
+The table at the top of `specs/visitors/list.png`. One row a source and site: today's visitors, and the same hours yesterday.
 
 ```
 direct → hostile territory     26    0
@@ -326,3 +326,4 @@ Found on 2026-11-17 while building, each one now in the code and its tests.
 - **The card's choices are the worker's.** The pages under one parent, the property an event shows, and the event a card leaves out for its filter are fields of the answer (`pageGroups`, `cardValues`, `namedForFilter`), so `worker/visitors.test.ts` holds them. The first build made them in the page.
 - **A `utm_` tag showed as a filter and in the page's address.** ChatGPT's `?utm_source=chatgpt.com` printed on the card beside "from chatgpt", made a one-page visit look like it did something, and rode on every landing page in Arrivals. It's left to the source now, and a page's link still carries it.
 - **A list the reader opened stays open over a refresh.** The page repaints whole every five minutes, so it reopens each open `<details>` by its key.
+- **The window is today since midnight ET, not the last eight hours.** Drew asked for it the evening of 2026-11-17, after the screen shipped. It matches the numbers screen's "today", and yday is midnight to the same time yesterday. Just after midnight the list is nearly empty, the same way the numbers screen's today is. The answer grows through the day: the spec measured 24 hours at 412 KB, 44 KB gzipped. The worker now reads four UTC days, since the day can be 25 hours on the night the clocks go back and "new" looks 48 hours before it. A finished day is cached for a day, so that's one more export call a day.

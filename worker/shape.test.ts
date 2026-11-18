@@ -3,7 +3,7 @@ import {
   aiName, BOT_AGENT, BOT_ID, DREW_CITY, DREW_DEVICES, outsideName, pageName, previewsOf, REAL_JQL, realWhere, redditLink,
   siteName, type Series,
 } from './shape';
-import { addDays, localNow } from './time';
+import { addDays, localMidnight, localNow } from './time';
 
 const series = (values: Record<string, Record<string, number>>): Series => ({ data: { series: [], values } });
 
@@ -91,6 +91,14 @@ describe('time', () => {
       date: '2026-10-10', hour: 23, minute: 30, tz: 'America/New_York',
     });
     expect(localNow('America/New_York', new Date('2026-10-11T04:05:00Z')).hour).toBe(0);
+  });
+  it('finds the last midnight in the project timezone, on the days the clocks change too', () => {
+    const midnight = (at: string) => new Date(localMidnight('America/New_York', new Date(at))).toISOString();
+    expect(midnight('2026-11-17T14:40:00Z')).toBe('2026-11-17T05:00:00.000Z'); // EST
+    expect(midnight('2026-11-17T03:00:00Z')).toBe('2026-11-16T05:00:00.000Z'); // 10 pm the day before
+    expect(midnight('2026-10-11T15:00:00Z')).toBe('2026-10-11T04:00:00.000Z'); // EDT
+    expect(midnight('2026-03-08T15:00:00Z')).toBe('2026-03-08T05:00:00.000Z'); // clocks went forward at 2 am
+    expect(midnight('2026-11-01T15:00:00Z')).toBe('2026-11-01T04:00:00.000Z'); // clocks went back at 2 am
   });
   it('adds days across month and year ends', () => {
     expect(addDays('2026-10-11', -6)).toBe('2026-10-05');

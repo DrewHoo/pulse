@@ -261,9 +261,11 @@ describe('the visitors screen', () => {
     }
   });
 
-  it('answers the visitors of the last eight hours, shaped', async () => {
-    exported = [view('a', 30), view('a', 20), view('b', 5)].join('\n');
+  it('answers the visitors since midnight, shaped', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-17T17:00:00Z') }); // noon in New York
+    exported = [view('a', 30), view('a', 20), view('b', 5), view('c', 13 * 60)].join('\n'); // c left at 11 pm
     const body = await (await visitors()).json() as Visitors;
+    vi.useRealTimers();
     expect(body.visitors.map((v) => [v.id, v.visits[0]!.views])).toEqual([['b', 1], ['a', 2]]);
     expect(body.arrivals.map((a) => [a.source, a.site, a.visitors])).toEqual([['direct', 'hostile territory', 2]]);
     expect(body.staleSince).toBeNull();

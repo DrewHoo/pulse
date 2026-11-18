@@ -218,7 +218,7 @@ function arrivals(s: Visitors): string {
     <header><h2>Arrivals</h2><span class="n">vis</span><span class="w">yday</span></header>
     ${rows.slice(0, ARRIVALS_SHOWN).join('')}
     ${rest.length === 0 ? '' : `<details data-key="arrivals rest"><summary class="more">${rest.length} more</summary>${rest.join('')}</details>`}
-    <p class="foot">Visits by where they came from and the site they landed on. yday is the same ${s.hours} hours yesterday; new has no arrival in the two days before. A row opens to its landing pages.</p>
+    <p class="foot">Visits by where they came from and the site they landed on. yday is the same hours yesterday; new has no arrival in the two days before. A row opens to its landing pages.</p>
   </section>`;
 }
 
@@ -241,14 +241,14 @@ export function renderVisitors(s: Visitors, view: VisitorsView, failure = ''): s
   return `
   ${topBar('visitors', asOf)}
   ${note ? `<p class="note">${esc(note)}</p>` : ''}
-  <p class="lede"><b>${s.visitors.length}</b>visitors in the last ${s.hours} hours ${DOT} real users only</p>
+  <p class="lede"><b>${s.visitors.length}</b>visitors since midnight ${DOT} real users only</p>
   ${chips(s.visitors, site)}
   <div class="columns">
   ${arrivals(s)}
   <section class="people">
     <h2>Visitors, latest first</h2>
     ${landing === null ? '' : `<button type="button" class="narrowed" data-landing="">${from(landing.source)} ${ARROW} ${esc(landing.site)} ${esc(landing.page)}${landing.query ? `?${esc(landing.query)}` : ''} <span class="x">✕</span></button>`}
-    ${cards.length === 0 ? `<div class="empty">nobody ${site !== null || landing !== null ? 'matches' : `in the last ${s.hours} hours`}</div>` : cards.slice(0, CARDS_SHOWN).join('')}
+    ${cards.length === 0 ? `<div class="empty">nobody ${site !== null || landing !== null ? 'matches' : 'since midnight'}</div>` : cards.slice(0, CARDS_SHOWN).join('')}
     ${rest.length === 0 ? '' : `<details data-key="cards rest"><summary class="more">show the other ${rest.length}</summary>${rest.join('')}</details>`}
   </section>
   ${view.wide ? pane(s.visitors.find((visitor) => shortId(visitor) === view.open)) : ''}

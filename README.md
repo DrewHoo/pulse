@@ -61,7 +61,7 @@ it reads the site's pageviews and must not add to them.
 
 ## The visitors screen
 
-Who was here in the last eight hours and what each of them did, latest first.
+Who was here since midnight ET and what each of them did, latest first.
 `specs/visitors.spec.md` has the rules and the reasons, and
 `specs/visitors/*.png` are the screen. The header's two words switch screens,
 and the choice rides in the URL as `?v=visitors`.
@@ -72,7 +72,7 @@ one visitor: the site, time in view and how far down the page got, the place,
 the device and where the visit came from, then its pages and the filters and
 events on them. A tap opens the card (`&d=<id>`) to every page as a link to
 the live address, every event name with its values, and the visit's events in
-order. Above the cards, Arrivals counts the window's visits by source and
+order. Above the cards, Arrivals counts today's visits by source and
 site, beside the same hours yesterday, and marks a source or a landing page
 with no arrival in the two days before as new. From 1000px wide the screen is
 columns, and the opened visitor reads in a pane beside the list.

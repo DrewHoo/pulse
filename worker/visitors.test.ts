@@ -5,7 +5,8 @@ import {
 
 const VIEW = '$mp_web_page_view';
 const HT = 'https://drewhoover.com/hostile-territory';
-const NOW = new Date('2026-11-17T14:40:00Z');
+const NOW = new Date('2026-11-17T14:40:00Z'); // 9:40 am in New York
+const TZ = 'America/New_York';
 const minutesAgo = (m: number) => NOW.getTime() - m * 60_000;
 
 // One browser's event on Hostile Territory, `at` in seconds after the visit's start.
@@ -39,10 +40,8 @@ describe('reading the export', () => {
     expect(readExport('')).toEqual([]);
   });
 
-  it('asks for the UTC days from two days before the window through today', () => {
-    expect(exportDays(new Date('2026-11-17T14:40:00Z'))).toEqual(['2026-11-15', '2026-11-16', '2026-11-17']);
-    // 2:00 UTC: the window began yesterday, so "new" looks back a day further
-    expect(exportDays(new Date('2026-11-17T02:00:00Z'))).toEqual(['2026-11-14', '2026-11-15', '2026-11-16', '2026-11-17']);
+  it('asks for the UTC days from two days before the longest day through today', () => {
+    expect(exportDays(new Date('2026-11-17T14:40:00Z'))).toEqual(['2026-11-14', '2026-11-15', '2026-11-16', '2026-11-17']);
     // a week back, for a source's landing pages
     expect(exportDays(new Date('2026-11-17T14:40:00Z'), LANDING_DAYS * 24)).toHaveLength(8);
   });
@@ -174,21 +173,27 @@ describe('visitors', () => {
 
   it('lists each browser once, the latest event first, and never mixes two browsers\' events', () => {
     const events = [visit('a', 50), visit('b', 40), visit('a', 30), visit('b', 20, {}, '/coach/ryan-day/'), visit('c', 600)];
-    const { visitors } = visitorsOf(events, VIEW, NOW);
-    expect(visitors.map((v) => v.id)).toEqual(['b', 'a']); // c left ten hours ago
+    const { visitors } = visitorsOf(events, VIEW, TZ, NOW);
+    expect(visitors.map((v) => v.id)).toEqual(['b', 'a']); // c left at 11:40 pm yesterday
     expect(visitors[0]!.visits[0]!.pages.map((p) => p.page)).toEqual(['/', '/coach/ryan-day']);
     expect(visitors[1]!.visits[0]!.views).toBe(2);
   });
 
   it('splits a browser\'s events into visits at a gap of thirty minutes, latest first', () => {
     const events = [visit('a', 200), visit('a', 190), visit('a', 100), visit('a', 71), visit('a', 10)];
-    const { visitors } = visitorsOf(events, VIEW, NOW);
+    const { visitors } = visitorsOf(events, VIEW, TZ, NOW);
     expect(visitors[0]!.visits.map((v) => v.views)).toEqual([1, 2, 2]);
+  });
+
+  it('starts the list over at midnight', () => {
+    const justAfter = new Date('2026-11-17T05:20:00Z'); // 12:20 am
+    const events = [{ ...visit('a', 0), at: justAfter.getTime() - 60 * 60_000 }, { ...visit('b', 0), at: justAfter.getTime() - 10 * 60_000 }];
+    expect(visitorsOf(events, VIEW, TZ, justAfter).visitors.map((v) => v.id)).toEqual(['b']);
   });
 
   it('describes the browser by its latest event', () => {
     const facts = { city: 'Chicago', region: 'Illinois', country: 'US', deviceName: 'iPhone', browser: 'Mobile Safari', screenWidth: 390, screenHeight: 844, firstReferrer: 'https://www.google.com/' };
-    const [v] = visitorsOf([visit('a', 5, facts)], VIEW, NOW).visitors;
+    const [v] = visitorsOf([visit('a', 5, facts)], VIEW, TZ, NOW).visitors;
     expect([v!.place, v!.device, v!.browser, v!.screen, v!.firstSource]).toEqual(['Chicago, IL', 'iPhone', 'Mobile Safari', '390×844', 'google']);
   });
 });
@@ -201,10 +206,10 @@ describe('arrivals', () => {
   it('counts the window\'s visitors by source and site, beside the same hours yesterday', () => {
     const events = [
       arrive('a', 1), arrive('b', 2), arrive('c', 3, reddit),
-      arrive('d', 25), arrive('e', 30, reddit), arrive('f', 31, reddit), // yesterday's same eight hours
+      arrive('d', 25), arrive('e', 30, reddit), arrive('f', 31, reddit), // yesterday from midnight to 9:40 am
       arrive('g', 20), // yesterday, outside them
     ];
-    const { arrivals } = visitorsOf(events, VIEW, NOW);
+    const { arrivals } = visitorsOf(events, VIEW, TZ, NOW);
     expect(arrivals.map((a) => [a.source, a.site, a.visitors, a.yesterday, a.isNew])).toEqual([
       ['direct', 'hostile territory', 2, 1, false],
       ['reddit', 'hostile territory', 1, 2, false],
@@ -216,7 +221,7 @@ describe('arrivals', () => {
       arrive('a', 1, reddit, '/coach/josh-heupel/'), arrive('b', 2, reddit), arrive('c', 3),
       arrive('d', 30, reddit), // reddit sent someone to / yesterday, to nobody's coach page
     ];
-    const { arrivals } = visitorsOf(events, VIEW, NOW);
+    const { arrivals } = visitorsOf(events, VIEW, TZ, NOW);
     const [fromReddit, direct] = [arrivals.find((a) => a.source === 'reddit')!, arrivals.find((a) => a.source === 'direct')!];
     expect(direct.isNew).toBe(true);
     expect(fromReddit.isNew).toBe(false);
@@ -224,9 +229,9 @@ describe('arrivals', () => {
   });
 
   it('counts a visit where it started, not where it reaches', () => {
-    // began nine hours ago and is still going: a card, not one of the window's arrivals
-    const events = [arrive('a', 9), arrive('a', 8.7), arrive('a', 8.4), arrive('a', 8.1), arrive('a', 7.8)];
-    const answer = visitorsOf(events, VIEW, NOW);
+    // began at 11:40 pm yesterday and went past midnight: a card, not one of today's arrivals
+    const events = [arrive('a', 10), arrive('a', 9.7), arrive('a', 9.4), arrive('a', 9.1), arrive('a', 8.8)];
+    const answer = visitorsOf(events, VIEW, TZ, NOW);
     expect(answer.visitors).toHaveLength(1);
     expect(answer.arrivals).toEqual([]);
   });

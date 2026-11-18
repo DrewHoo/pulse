@@ -1,16 +1,17 @@
 import { groupBy, maxBy, sumBy, uniq, uniqBy } from 'es-toolkit';
 import { RESOLVE_SECONDS, SESSION_MINUTES } from './measures';
 import { addressOf, deviceName, placeName, sourceName, type Address } from './names';
-import { addDays } from './time';
+import { addDays, localMidnight } from './time';
 
-// The visitors screen: who was here in the last WINDOW_HOURS and what each of
-// them did, shaped from Mixpanel's raw export. specs/visitors.spec.md holds
+// The visitors screen: who was here since midnight in the project's timezone
+// and what each of them did, shaped from Mixpanel's raw export. specs/visitors.spec.md holds
 // the rules, in "The words" and "What a visit's summary holds".
 //
 // Everything here reads event names and property names. Nothing names a site,
 // so a new site, a new event or a new property shows up with no change.
 
-const WINDOW_HOURS = 8;
+/** The longest a day since midnight runs: 25 hours, the night the clocks go back. */
+const LONGEST_DAY_HOURS = 25;
 /** An arrival is new when this many hours before the window hold none like it. */
 const NEW_AFTER_HOURS = 48;
 /** The numbers screen lists a source's landing pages over this many days. */
@@ -104,11 +105,11 @@ export function readExport(body: string): SiteEvent[] {
 
 /**
  * The UTC days an answer at `now` needs to reach `hours` back, oldest first.
- * The visitors screen's reach is its window, the same hours yesterday, and
- * the days before that "new" looks back over. The export takes whole UTC
+ * The visitors screen's reach is today since midnight, the same hours
+ * yesterday, and the days before that "new" looks back over. The export takes whole UTC
  * days, and the worker asks for one a call.
  */
-export function exportDays(now: Date, hours = WINDOW_HOURS + NEW_AFTER_HOURS): string[] {
+export function exportDays(now: Date, hours = LONGEST_DAY_HOURS + NEW_AFTER_HOURS): string[] {
   const day = (at: number) => new Date(at).toISOString().slice(0, 10);
   const first = day(now.getTime() - hours * HOUR_MS);
   const last = day(now.getTime());
@@ -221,7 +222,6 @@ export interface Arrival {
 export interface Visitors {
   v: 1;
   fetchedAt: string;
-  hours: number;
   visitors: Visitor[]; // latest event first
   arrivals: Arrival[];
   staleSince?: string | null; // set by index.ts when a day's events are the last good copy
@@ -450,11 +450,11 @@ function arrivalsOf(arrived: Arrived[], from: number, to: number): Arrival[] {
 
 /**
  * Browsers' events, from exportDays(now), as the screen's answer. A visitor
- * is listed with the visits that reach into the last WINDOW_HOURS.
+ * is listed with the visits that reach past midnight in `tz`.
  */
-export function visitorsOf(events: SiteEvent[], pageview: string, now: Date = new Date()): Visitors {
+export function visitorsOf(events: SiteEvent[], pageview: string, tz: string, now: Date = new Date()): Visitors {
   const to = now.getTime();
-  const from = to - WINDOW_HOURS * HOUR_MS;
+  const from = localMidnight(tz, now);
   const browsers = visitsByBrowser(events);
   const visitors = browsers.flatMap(({ events: ofBrowser, visits }) => {
     const inWindow = visits.filter((visit) => visit.at(-1)!.at >= from).reverse();
@@ -463,7 +463,6 @@ export function visitorsOf(events: SiteEvent[], pageview: string, now: Date = ne
   return {
     v: 1,
     fetchedAt: now.toISOString(),
-    hours: WINDOW_HOURS,
     visitors: visitors.sort((a, b) => b.visits[0]!.end - a.visits[0]!.end),
     arrivals: arrivalsOf(arrivedOf(browsers, pageview), from, to),
   };
