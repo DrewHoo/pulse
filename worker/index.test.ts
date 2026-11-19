@@ -3,7 +3,7 @@ import worker, { type Env } from './index';
 import { MEASURES_JQL, type Measures } from './measures';
 import { WEEK_HOURS } from './numbers';
 import { realWhere, type Stats } from './shape';
-import { exportDays, type Visitors } from './visitors';
+import { exportDays, spanHours, type Visitors } from './visitors';
 
 // The worker against a stand-in Mixpanel: every call is recorded, an export
 // call answers its day's lines of `exported`, and a Query API call an empty
@@ -292,6 +292,18 @@ describe('the visitors screen', () => {
     expect((await stats()).status).toBe(503);
     expect(exports()).toHaveLength(sent);
     expect(queries().length).toBeGreaterThan(0);
+  });
+
+  it('asks for two weeks and two days for ?span=week, and refuses a span it doesn\'t know', async () => {
+    const res = await settled(await worker.fetch(
+      new Request('https://drewhoover.com/pulse/api/visitors?span=week', { headers: { authorization: 'Bearer test-token' } }), env, ctx,
+    ));
+    expect((await res.json() as Visitors).span).toBe('week');
+    expect(exports()).toHaveLength(exportDays(new Date(), spanHours('week')).length);
+    const bad = await worker.fetch(
+      new Request('https://drewhoover.com/pulse/api/visitors?span=month', { headers: { authorization: 'Bearer test-token' } }), env, ctx,
+    );
+    expect(bad.status).toBe(400);
   });
 
   it('wants the token', async () => {

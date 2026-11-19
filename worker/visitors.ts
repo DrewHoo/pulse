@@ -1,25 +1,23 @@
 import { groupBy, maxBy, sumBy, uniq, uniqBy } from 'es-toolkit';
 import { RESOLVE_SECONDS, SESSION_MINUTES } from './measures';
 import { addressOf, deviceName, placeName, sourceName, type Address } from './names';
+import { SPANS, type Span } from './spans';
 import { addDays, localMidnight } from './time';
 
-// The visitors screen: who was here since midnight in the project's timezone
-// and what each of them did, shaped from Mixpanel's raw export. specs/visitors.spec.md holds
+// The visitors screen: who was here since midnight in the project's timezone,
+// or over the last seven days, and what each of them did, shaped from Mixpanel's raw export. specs/visitors.spec.md holds
 // the rules, in "The words" and "What a visit's summary holds".
 //
 // Everything here reads event names and property names. Nothing names a site,
 // so a new site, a new event or a new property shows up with no change.
 
-/** The longest a day since midnight runs: 25 hours, the night the clocks go back. */
-const LONGEST_DAY_HOURS = 25;
-/** An arrival is new when this many hours before the window hold none like it. */
-const NEW_AFTER_HOURS = 48;
 /** The numbers screen lists a source's landing pages over this many days. */
 export const LANDING_DAYS = 7;
 /** A visit keeps this many of its events in the answer, and the count of the rest. */
 export const EVENTS_KEPT = 300;
 
 const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
 const VISIT_GAP_MS = SESSION_MINUTES * 60_000;
 const PASSING_MS = RESOLVE_SECONDS * 1000;
 
@@ -105,11 +103,9 @@ export function readExport(body: string): SiteEvent[] {
 
 /**
  * The UTC days an answer at `now` needs to reach `hours` back, oldest first.
- * The visitors screen's reach is today since midnight, the same hours
- * yesterday, and the days before that "new" looks back over. The export takes whole UTC
- * days, and the worker asks for one a call.
+ * The export takes whole UTC days, and the worker asks for one a call.
  */
-export function exportDays(now: Date, hours = LONGEST_DAY_HOURS + NEW_AFTER_HOURS): string[] {
+export function exportDays(now: Date, hours: number): string[] {
   const day = (at: number) => new Date(at).toISOString().slice(0, 10);
   const first = day(now.getTime() - hours * HOUR_MS);
   const last = day(now.getTime());
@@ -214,13 +210,14 @@ export interface Arrival {
   source: string;
   site: string;
   visitors: number;
-  yesterday: number; // visitors in the same hours a day earlier
-  isNew: boolean;    // none like it in the NEW_AFTER_HOURS before the window
+  earlier: number; // visitors in the same hours a span earlier: yesterday, or the week before
+  isNew: boolean;  // none like it in the span's newAfterDays before the window
   landings: Landing[];
 }
 
 export interface Visitors {
-  v: 1;
+  v: 2;
+  span: Span;
   fetchedAt: string;
   visitors: Visitor[]; // latest event first
   arrivals: Arrival[];
@@ -421,12 +418,13 @@ const visitorCount = (arrived: Arrived[]) => uniq(arrived.map((a) => a.device)).
 const sourceAndSite = (a: Arrived) => `${a.source}\n${a.landing.site}`;
 const landingPage = (a: Arrived) => `${a.landing.page}\n${a.landing.query}`;
 
-// The window's arrivals by source and site, each beside the same hours yesterday.
-function arrivalsOf(arrived: Arrived[], from: number, to: number): Arrival[] {
-  const DAY_MS = 24 * HOUR_MS;
+// The window's arrivals by source and site, each beside the same hours a span earlier.
+function arrivalsOf(arrived: Arrived[], from: number, to: number, span: Span): Arrival[] {
+  const { comparedDaysBack, newAfterDays } = SPANS[span];
   const starting = (start: number, end: number) => arrived.filter((a) => a.start >= start && a.start <= end);
-  const yesterday = groupBy(starting(from - DAY_MS, to - DAY_MS), sourceAndSite);
-  const before = starting(from - NEW_AFTER_HOURS * HOUR_MS, from - 1);
+  const back = comparedDaysBack * DAY_MS;
+  const earlier = groupBy(starting(from - back, to - back), sourceAndSite);
+  const before = starting(from - newAfterDays * DAY_MS, from - 1);
   const seenBefore = new Set(before.map(sourceAndSite));
   const landedBefore = new Set(before.map((a) => `${sourceAndSite(a)}\n${landingPage(a)}`));
 
@@ -440,7 +438,7 @@ function arrivalsOf(arrived: Arrived[], from: number, to: number): Arrival[] {
       source: group[0]!.source,
       site: group[0]!.landing.site,
       visitors: visitorCount(group),
-      yesterday: visitorCount(yesterday[key] ?? []),
+      earlier: visitorCount(earlier[key] ?? []),
       isNew: !seenBefore.has(key),
       landings: landings.sort((a, b) => b.visitors - a.visitors || a.page.localeCompare(b.page)),
     };
@@ -449,22 +447,34 @@ function arrivalsOf(arrived: Arrived[], from: number, to: number): Arrival[] {
 }
 
 /**
- * Browsers' events, from exportDays(now), as the screen's answer. A visitor
- * is listed with the visits that reach past midnight in `tz`.
+ * The hours an answer for `span` reaches back: the window at its longest (a
+ * day can be 25 hours, the night the clocks go back), the hours compared with
+ * it, and the days "new" looks back over.
  */
-export function visitorsOf(events: SiteEvent[], pageview: string, tz: string, now: Date = new Date()): Visitors {
+export const spanHours = (span: Span) => {
+  const { days, comparedDaysBack, newAfterDays } = SPANS[span];
+  return days * 24 + 1 + Math.max(comparedDaysBack, newAfterDays) * 24;
+};
+
+/**
+ * Browsers' events, from exportDays(now, spanHours(span)), as the screen's
+ * answer. A visitor is listed with the visits that reach past the span's
+ * first midnight in `tz`.
+ */
+export function visitorsOf(events: SiteEvent[], pageview: string, tz: string, span: Span, now: Date = new Date()): Visitors {
   const to = now.getTime();
-  const from = localMidnight(tz, now);
+  const from = localMidnight(tz, now, SPANS[span].days - 1);
   const browsers = visitsByBrowser(events);
   const visitors = browsers.flatMap(({ events: ofBrowser, visits }) => {
     const inWindow = visits.filter((visit) => visit.at(-1)!.at >= from).reverse();
     return inWindow.length > 0 ? [visitorOf(ofBrowser, inWindow.map((visit) => visitOf(visit, pageview)))] : [];
   });
   return {
-    v: 1,
+    v: 2,
+    span,
     fetchedAt: now.toISOString(),
     visitors: visitors.sort((a, b) => b.visits[0]!.end - a.visits[0]!.end),
-    arrivals: arrivalsOf(arrivedOf(browsers, pageview), from, to),
+    arrivals: arrivalsOf(arrivedOf(browsers, pageview), from, to, span),
   };
 }
 

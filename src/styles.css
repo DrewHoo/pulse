@@ -149,9 +149,12 @@ summary::-webkit-details-marker { display: none; }
 
 .lede { margin: 0 0 8px; color: var(--mute); font-size: 12px; }
 .lede b { color: var(--hi3); font: 600 22px/1 var(--num); margin-right: 5px; }
+.spans button { background: none; border: 0; border-bottom: 1px dashed var(--ghost); padding: 0 0 1px; color: var(--mute); cursor: pointer; }
+.spans button.on { color: var(--fg); border-bottom-color: var(--hi); }
+button.more { display: block; width: 100%; margin-top: 6px; padding: 10px; background: none; border: 1px dashed var(--ghost); border-radius: 6px; cursor: pointer; }
 
 .arrivals { margin-bottom: 12px; }
-.arrivals header, .arrivals .row { grid-template-columns: 1fr 34px 40px; }
+.arrivals header, .arrivals .row { grid-template-columns: 1fr 34px 46px; }
 .arrivals .row .n { color: var(--hi3); }
 .arrival[open] > summary .name { white-space: normal; }
 .landing { width: 100%; background: none; border: 0; text-align: left; cursor: pointer; padding-left: 14px; font-size: 12px; }

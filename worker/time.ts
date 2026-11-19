@@ -51,11 +51,12 @@ export function localHours(tz: string): (at: number) => { date: string; hour: nu
 }
 
 /**
- * The UTC time of the zone's last midnight before `at`. The offset is read at
- * midnight itself, so a day the clocks change on still starts at 12 am.
+ * The UTC time of the zone's last midnight before `at`, or of the midnight
+ * `daysBack` days before that. The offset is read at midnight itself, so a day
+ * the clocks change on still starts at 12 am.
  */
-export function localMidnight(tz: string, at: Date = new Date()): number {
-  const [y, m, d] = localNow(tz, at).date.split('-').map(Number) as [number, number, number];
+export function localMidnight(tz: string, at: Date = new Date(), daysBack = 0): number {
+  const [y, m, d] = addDays(localNow(tz, at).date, -daysBack).split('-').map(Number) as [number, number, number];
   const midnightOnTheClock = Date.UTC(y, m - 1, d);
   return midnightOnTheClock - offsetMs(tz, new Date(midnightOnTheClock - offsetMs(tz, at)));
 }

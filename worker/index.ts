@@ -4,7 +4,8 @@
 // page, so no CORS.
 //
 //   GET /pulse/api/stats     bearer token (or ?k=), the numbers screen's JSON
-//   GET /pulse/api/visitors  bearer token (or ?k=), the visitors screen's JSON
+//   GET /pulse/api/visitors  bearer token (or ?k=), the visitors screen's JSON,
+//                            since midnight or ?span=week
 //   GET /pulse/api/health    no auth, whether the secrets are set
 //
 // Both screens count from Mixpanel's raw export, one UTC day a call, real
@@ -38,7 +39,8 @@ import {
 import { ACTS, MEASURE_DAYS, MEASURES_JQL, measures, RESOLVE_SECONDS, SESSION_MINUTES, type MeasureDays } from './measures';
 import { numbersOf, WEEK_HOURS } from './numbers';
 import { addDays, localNow, offsetMs, type LocalNow } from './time';
-import { exportDays, landingsFrom, readExport, visitorsOf, type SiteEvent } from './visitors';
+import { isSpan, type Span } from './spans';
+import { exportDays, landingsFrom, readExport, spanHours, visitorsOf, type SiteEvent } from './visitors';
 
 export interface Env {
   MIXPANEL_SERVICE_ACCOUNT?: string; // secret: "<username>:<secret>" of a Mixpanel service account
@@ -314,12 +316,15 @@ const stats: Route = async (url, env, ctx) => {
   }
 };
 
-const visitors: Route = async (_url, env, ctx) => {
+const visitors: Route = async (url, env, ctx) => {
+  const asked = url.searchParams.get('span');
+  if (asked !== null && !isSpan(asked)) return json({ error: `unknown span: ${asked}` }, 400);
+  const span: Span = asked ?? 'today';
   const at = new Date();
   try {
-    const days = await eventsByDay(ctx, env, exportDays(at));
+    const days = await eventsByDay(ctx, env, exportDays(at, spanHours(span)));
     return json(
-      { ...visitorsOf(days.events, env.PAGEVIEW_EVENT, env.MIXPANEL_TZ, at), staleSince: days.staleSince },
+      { ...visitorsOf(days.events, env.PAGEVIEW_EVENT, env.MIXPANEL_TZ, span, at), staleSince: days.staleSince },
       200, { 'x-pulse-cache': days.cache },
     );
   } catch (e) {

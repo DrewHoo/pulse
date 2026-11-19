@@ -1,7 +1,7 @@
 import { countBy, uniq } from 'es-toolkit';
 import { DIRECT } from '../worker/names';
 import { ago, esc, topBar } from './render';
-import type { Arrival, EventTotal, Landing, PageSeen, Visit, Visitor, Visitors } from './stats';
+import type { Arrival, EventTotal, Landing, PageSeen, Span, Visit, Visitor, Visitors } from './stats';
 
 // The visitors screen: the count, a chip a site, the arrivals, and a card a
 // visitor, latest first. The worker has done the shaping (worker/visitors.ts);
@@ -9,6 +9,8 @@ import type { Arrival, EventTotal, Landing, PageSeen, Visit, Visitor, Visitors }
 
 /** What the reader has picked on the screen. main.ts holds it and wires the taps. */
 export interface VisitorsView {
+  span: Span;                    // since midnight, or the last seven days
+  cards: number;                 // how many cards show, raised by "show more"
   site: string | null;           // the lit chip's site, or every site
   landing: LandingPicked | null; // the arrivals' landing page the cards are narrowed to
   open: string | null;           // the opened card, by shortId
@@ -17,7 +19,7 @@ export interface VisitorsView {
 export interface LandingPicked { source: string; site: string; page: string; query: string }
 
 const ARRIVALS_SHOWN = 7;
-const CARDS_SHOWN = 150;
+export const CARDS_SHOWN = 150;
 
 // A visitor's id as the URL and the card carry it.
 const shortId = (visitor: Visitor) => visitor.id.slice(0, 8);
@@ -30,6 +32,18 @@ const dotted = (parts: string[]) => parts.filter(Boolean).join(` ${DOT} `);
 function clock(at: number, seconds = false): string {
   const time = new Date(at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) });
   return time.replace(/\s?AM$/, 'a').replace(/\s?PM$/, 'p');
+}
+
+// The span's words: the picker's, the count's and the arrivals' column.
+const SPAN_WORDS: Record<Span, { picker: string; nobody: string; earlier: string; foot: string }> = {
+  today: { picker: 'since midnight', nobody: 'since midnight', earlier: 'yday', foot: 'yday is the same hours yesterday; new has no arrival in the two days before' },
+  week: { picker: '7 days', nobody: 'in 7 days', earlier: 'prev wk', foot: 'prev wk is the same hours the week before; new has none in that week' },
+};
+
+// A visit's time: "9:29p" today, "Tue 9:29p" on an earlier day.
+function when(at: number): string {
+  const isToday = new Date(at).toDateString() === new Date().toDateString();
+  return isToday ? clock(at) : `${new Date(at).toLocaleDateString('en-US', { weekday: 'short' })} ${clock(at)}`;
 }
 
 function duration(seconds: number): string {
@@ -122,7 +136,7 @@ function opened(visitor: Visitor): string {
   const [latest, ...earlier] = visitor.visits as [Visit, ...Visit[]];
   const id = shortId(visitor);
   const facts = dotted([
-    esc(visitor.browser), esc(visitor.screen), `${clock(latest.start)}–${clock(latest.end)}`,
+    esc(visitor.browser), esc(visitor.screen), `${when(latest.start)}–${clock(latest.end)}`,
     latest.scroll === null ? '' : plural(latest.taps, 'tap'),
     visitor.firstSource === latest.source ? '' : `first came ${from(visitor.firstSource)}`,
     id,
@@ -133,7 +147,7 @@ function opened(visitor: Visitor): string {
     ${visitBlocks(latest, `${id} ${latest.start}`)}
     ${earlier.map((v) => `
     <details data-key="visit ${id} ${v.start}">
-      <summary>${dotted([`${clock(v.start)}–${clock(v.end)}`, esc(v.landing.site), from(v.source), timeInView(v)])}</summary>
+      <summary>${dotted([`${when(v.start)}–${clock(v.end)}`, esc(v.landing.site), from(v.source), timeInView(v)])}</summary>
       ${visitBlocks(v, `${id} ${v.start}`)}
     </details>`).join('')}
   </div>`;
@@ -144,7 +158,7 @@ function opened(visitor: Visitor): string {
 function headLines(visitor: Visitor): string {
   const v = visitor.visits[0]!;
   return `
-      <span class="first"><b class="site">${esc(v.landing.site)}</b><span class="when">${dotted([timeInView(v), `<b>${clock(v.end)}</b>`])}</span></span>
+      <span class="first"><b class="site">${esc(v.landing.site)}</b><span class="when">${dotted([timeInView(v), `<b>${when(v.end)}</b>`])}</span></span>
       <span class="meta">${dotted([esc(visitor.place), esc(visitor.device), from(v.source), visitor.visits.length > 1 ? `${visitor.visits.length} visits` : ''])}</span>`;
 }
 
@@ -203,7 +217,7 @@ function arrivalRow(a: Arrival, index: number): string {
   <details class="arrival" data-key="arrival ${esc(a.source)} ${esc(a.site)}">
     <summary class="row">
       <span class="name">${sourceWords(a.source)} ${ARROW} ${esc(a.site)}${isNew(a.isNew)}</span>
-      <span class="n">${a.visitors}</span><span class="w">${a.yesterday}</span>
+      <span class="n">${a.visitors}</span><span class="w">${a.earlier}</span>
     </summary>
     ${a.landings.map(landing).join('')}
   </details>`;
@@ -211,14 +225,15 @@ function arrivalRow(a: Arrival, index: number): string {
 
 function arrivals(s: Visitors): string {
   if (s.arrivals.length === 0) return '';
+  const words = SPAN_WORDS[s.span];
   const rows = s.arrivals.map(arrivalRow);
   const rest = rows.slice(ARRIVALS_SHOWN);
   return `
   <section class="list arrivals">
-    <header><h2>Arrivals</h2><span class="n">vis</span><span class="w">yday</span></header>
+    <header><h2>Arrivals</h2><span class="n">vis</span><span class="w">${words.earlier}</span></header>
     ${rows.slice(0, ARRIVALS_SHOWN).join('')}
     ${rest.length === 0 ? '' : `<details data-key="arrivals rest"><summary class="more">${rest.length} more</summary>${rest.join('')}</details>`}
-    <p class="foot">Visits by where they came from and the site they landed on. yday is the same hours yesterday; new has no arrival in the two days before. A row opens to its landing pages.</p>
+    <p class="foot">Visits by where they came from and the site they landed on. ${words.foot}. A row opens to its landing pages.</p>
   </section>`;
 }
 
@@ -235,21 +250,23 @@ export function renderVisitors(s: Visitors, view: VisitorsView, failure = ''): s
   const { site, landing } = view;
   const shown = s.visitors.filter((visitor) =>
     visitor.visits.some((v) => (site === null || v.landing.site === site) && (landing === null || landedOn(v, landing))));
-  const cards = shown.map((visitor) => card(visitor, view));
-  const rest = cards.slice(CARDS_SHOWN);
+  const left = shown.length - view.cards;
+  const words = SPAN_WORDS[s.span];
+  const picker = (Object.keys(SPAN_WORDS) as Span[]).map((span) =>
+    `<button type="button" data-span="${span}" class="${span === s.span ? 'on' : ''}" aria-pressed="${span === s.span}">${SPAN_WORDS[span].picker}</button>`).join(` ${DOT} `);
   const asOf = `as of ${clock(Date.parse(s.fetchedAt))} · <span id="ago">${ago(s.fetchedAt)}</span>`;
   return `
   ${topBar('visitors', asOf)}
   ${note ? `<p class="note">${esc(note)}</p>` : ''}
-  <p class="lede"><b>${s.visitors.length}</b>visitors since midnight ${DOT} real users only</p>
+  <p class="lede"><b>${s.visitors.length}</b>visitors <span class="spans">${picker}</span> ${DOT} real users only</p>
   ${chips(s.visitors, site)}
   <div class="columns">
   ${arrivals(s)}
   <section class="people">
     <h2>Visitors, latest first</h2>
     ${landing === null ? '' : `<button type="button" class="narrowed" data-landing="">${from(landing.source)} ${ARROW} ${esc(landing.site)} ${esc(landing.page)}${landing.query ? `?${esc(landing.query)}` : ''} <span class="x">✕</span></button>`}
-    ${cards.length === 0 ? `<div class="empty">nobody ${site !== null || landing !== null ? 'matches' : 'since midnight'}</div>` : cards.slice(0, CARDS_SHOWN).join('')}
-    ${rest.length === 0 ? '' : `<details data-key="cards rest"><summary class="more">show the other ${rest.length}</summary>${rest.join('')}</details>`}
+    ${shown.length === 0 ? `<div class="empty">nobody ${site !== null || landing !== null ? 'matches' : words.nobody}</div>` : shown.slice(0, view.cards).map((visitor) => card(visitor, view)).join('')}
+    ${left <= 0 ? '' : `<button type="button" class="more" data-more>show ${Math.min(left, CARDS_SHOWN)} more of ${left}</button>`}
   </section>
   ${view.wide ? pane(s.visitors.find((visitor) => shortId(visitor) === view.open)) : ''}
   </div>`;
