@@ -50,6 +50,13 @@ button { font: inherit; color: inherit; }
 .screens button { font-size: 14px; color: var(--mute); background: none; border: 0; padding: 0; cursor: pointer; }
 .screens button.on { color: var(--fg); font-weight: 600; }
 .asof { color: var(--mute); font-size: 12px; background: none; border: 0; padding: 0; cursor: pointer; }
+.asof .fetching {
+  width: 15px; height: 15px; margin-left: 5px; vertical-align: -3px;
+  fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round;
+  transition: color 0.3s;
+}
+.fetching[data-state='fetching'] { color: var(--hi); }
+.fetching[data-state='failed'] { color: var(--down); }
 
 .paths { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px; }
 .paths button {

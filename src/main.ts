@@ -4,6 +4,7 @@ import { CARDS_SHOWN, landingAt, renderVisitors, type VisitorsView } from './vis
 import { DEFAULT_PATH, isPathKey, type PathKey } from '../worker/shape';
 import type { Span, Stats, Visitors } from './stats';
 import { isSpan } from '../worker/spans';
+import { fetchEnded, fetchingIcon, fetchStarted } from './fetching';
 
 // The page is a static shell on GitHub Pages. Everything it shows comes from
 // the worker at ./api/, gated by a bearer token. The token arrives once in
@@ -39,6 +40,13 @@ function stored<T>(k: string): T | null {
   const last = store.get(k);
   if (!last) return null;
   try { return JSON.parse(last) as T; } catch { return null; }
+}
+
+// Every write of a screen goes through here, so the fetching icon, made once,
+// goes back in its place in the header.
+function draw(markup: string) {
+  root.innerHTML = markup;
+  root.querySelector('#fetching')?.replaceWith(fetchingIcon);
 }
 
 const param = (name: string) => new URLSearchParams(location.search).get(name);
@@ -115,7 +123,7 @@ function paint(note = '') {
   const paneOf = () => root.querySelector<HTMLElement>('.pane');
   const before = { id: paneOf()?.dataset.id, scrollTop: paneOf()?.scrollTop ?? 0 }; // read now: a removed element scrolls to 0
   root.classList.toggle('wide', view.wide);
-  root.innerHTML = html(note);
+  draw(html(note));
   for (const d of root.querySelectorAll<HTMLDetailsElement>('details[data-key]')) d.open = open.has(d.dataset.key);
   const pane = paneOf();
   if (pane && pane.dataset.id === before.id) pane.scrollTop = before.scrollTop;
@@ -188,15 +196,17 @@ async function refresh(force = false): Promise<void> {
   if (!force && Date.now() - fetchedLocal < STALE_MS) return;
   const k = token();
   if (!k) {
-    root.innerHTML = renderMessage(screen, 'no token', 'open this page once with ?k=<token> in the URL, then add it to the home screen from that address.');
+    draw(renderMessage(screen, 'no token', 'open this page once with ?k=<token> in the URL, then add it to the home screen from that address.'));
     return;
   }
   const want = showing();
   const url = screen === 'numbers' ? `${API}stats?path=${encodeURIComponent(path)}` : `${API}visitors${view.span === 'today' ? '' : `?span=${view.span}`}`;
   const failed = (title: string, why: string, note: string) => {
     if (answer()) paint(note);
-    else root.innerHTML = renderMessage(screen, title, why, path);
+    else draw(renderMessage(screen, title, why, path));
   };
+  let ok = false;
+  fetchStarted();
   inflight = (async () => {
     try {
       const res = await fetch(url, { headers: { authorization: `Bearer ${k}` }, cache: 'no-store' });
@@ -215,6 +225,7 @@ async function refresh(force = false): Promise<void> {
         store.set(visitorsKey(view.span), JSON.stringify(visitors));
       }
       fetchedLocal = Date.now();
+      ok = true;
       paint();
     } catch (e) {
       if (want !== showing()) return;
@@ -222,7 +233,8 @@ async function refresh(force = false): Promise<void> {
       failed('offline', why, `offline: ${why}`);
     } finally {
       inflight = null;
-      if (want !== showing()) void refresh(true); // fetch what is showing now
+      if (want !== showing()) void refresh(true); // fetch what is showing now, the icon still turning
+      else fetchEnded(ok);
     }
   })();
   return inflight;

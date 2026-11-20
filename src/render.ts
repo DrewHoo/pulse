@@ -211,14 +211,15 @@ export type Screen = (typeof SCREENS)[number];
 export const isScreen = (s: string | null): s is Screen => SCREENS.some((name) => name === s);
 
 // The top of both screens: the screens' names, and when the answer was
-// fetched, which is the refresh button. `asOf` is HTML.
+// fetched, which is the refresh button. `asOf` is HTML. main.ts puts the
+// fetching icon (fetching.ts) in the empty span after each paint.
 export function topBar(screen: Screen, asOf = 'pulse'): string {
   return `
   <header class="top">
     <nav class="screens" aria-label="screens">${SCREENS.map((name) =>
       `<button type="button" data-screen="${name}" class="${name === screen ? 'on' : ''}" aria-pressed="${name === screen}">${name}</button>`,
     ).join('')}</nav>
-    <button type="button" class="asof" id="refresh" aria-label="refresh">${asOf}</button>
+    <button type="button" class="asof" id="refresh" aria-label="refresh">${asOf}<span id="fetching"></span></button>
   </header>`;
 }
 
