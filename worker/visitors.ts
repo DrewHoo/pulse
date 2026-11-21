@@ -336,8 +336,9 @@ function viewsOf(events: SiteEvent[], pageview: string) {
   return { views, passing, settled: views.filter((view) => !passing.has(view)) };
 }
 
-// The addresses a visit was at, in order. A visit with no page view of its own
-// (a tab left open, reporting a leave) is on its first event's page.
+// The addresses a visit was at, in order. Events with no page view among them
+// (visitOf can be handed some, though visitsByBrowser makes no such visit) are
+// on their first event's page.
 const viewedOf = (events: SiteEvent[], settled: SiteEvent[]) => (settled.length > 0 ? settled : [events[0]!]).map(address);
 
 /** The addresses one visit's events were at, in order, without the page views that were passing through. */
@@ -396,11 +397,17 @@ function visitorOf(events: SiteEvent[], visits: Visit[]): Visitor {
   };
 }
 
-/** Every browser's events in order, split into its visits. */
-export function visitsByBrowser(events: SiteEvent[]) {
+/**
+ * Every browser's events in order, split into its visits. A visit has a page
+ * view. A run of events with none, SESSION_MINUTES after the browser's last
+ * event, is a tab from before reporting that it closed, or a crawler that sends
+ * a `leave` and never a page view (68 browsers in the eight days to
+ * 2026-11-21): it isn't a visit, and a browser with nothing else isn't a visitor.
+ */
+export function visitsByBrowser(events: SiteEvent[], pageview: string) {
   const inOrder = [...events].sort((a, b) => a.at - b.at);
   return Object.entries(groupBy(inOrder, (e) => e.device)).map(([device, ofDevice]) => ({
-    device, events: ofDevice, visits: splitVisits(ofDevice),
+    device, events: ofDevice, visits: splitVisits(ofDevice).filter((visit) => visit.some((e) => e.name === pageview)),
   }));
 }
 
@@ -461,15 +468,17 @@ export const spanHours = (span: Span) => {
 
 /**
  * Browsers' events, from exportDays(now, spanHours(span)), as the screen's
- * answer. A visitor is listed with the visits that reach past the span's
- * first midnight in `tz`.
+ * answer. A visitor is listed with the visits that have a page view since the
+ * span's first midnight in `tz`, which is how the numbers screen counts a
+ * day's visitors, so the two screens say the same number. A visit that began
+ * before that midnight and viewed a page after it is listed whole.
  */
 export function visitorsOf(events: SiteEvent[], pageview: string, tz: string, span: Span, now: Date = new Date()): Visitors {
   const to = now.getTime();
   const from = localMidnight(tz, now, SPANS[span].days - 1);
-  const browsers = visitsByBrowser(events);
+  const browsers = visitsByBrowser(events, pageview);
   const visitors = browsers.flatMap(({ events: ofBrowser, visits }) => {
-    const inWindow = visits.filter((visit) => visit.at(-1)!.at >= from).reverse();
+    const inWindow = visits.filter((visit) => visit.some((e) => e.name === pageview && e.at >= from)).reverse();
     return inWindow.length > 0 ? [visitorOf(ofBrowser, inWindow.map((visit) => visitOf(visit, pageview)))] : [];
   });
   return {
@@ -490,7 +499,7 @@ export function landingsFrom(source: string, events: SiteEvent[], pageview: stri
   const to = now.getTime();
   const from = to - LANDING_DAYS * 24 * HOUR_MS;
   const newSince = to - 24 * HOUR_MS;
-  const arrived = arrivedOf(visitsByBrowser(events), pageview).filter((a) => a.source === source && a.start >= from);
+  const arrived = arrivedOf(visitsByBrowser(events, pageview), pageview).filter((a) => a.source === source && a.start >= from);
   const landings = Object.values(groupBy(arrived, (a) => `${a.landing.site}\n${landingPage(a)}`)).map((landed): SourceLanding => {
     const starts = landed.map((a) => a.start);
     const first = Math.min(...starts);

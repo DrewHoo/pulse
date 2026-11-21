@@ -272,6 +272,27 @@ describe('the visitors screen', () => {
     expect(body.staleSince).toBeNull();
   });
 
+  it('counts the visitors since midnight as the numbers screen counts today\'s', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-17T17:00:00Z') }); // noon in New York
+    const leave = (device: string, minutesAgo: number) => JSON.stringify({
+      event: 'leave',
+      properties: {
+        time: Date.now() - minutesAgo * 60_000, distinct_id: `$device:${device}`, $device_id: device, $insert_id: `leave${device}${minutesAgo}`,
+        $current_url: 'https://drewhoover.com/hostile-territory/', site: 'hostile-territory', load: device, seconds: 33,
+      },
+    });
+    exported = [
+      view('a', 30), view('b', 5),
+      view('c', 13 * 60), leave('c', 60), // c viewed at 11 pm and closed the tab at 11 am
+      leave('d', 20),                     // d sent a leave and never a page view
+    ].join('\n');
+    const listed = (await (await visitors()).json() as Visitors).visitors.map((v) => v.id);
+    const counted = (await (await stats('?path=all')).json() as Stats).totals.todayVisitors;
+    vi.useRealTimers();
+    expect(listed).toEqual(['b', 'a']);
+    expect(counted).toBe(listed.length);
+  });
+
   it('asks again only for today once the days are cached', async () => {
     await visitors();
     const first = exports().length;

@@ -62,6 +62,12 @@ describe('a visit, as the counts read it', () => {
     expect(v.pages).toBe(2);
   });
 
+  it('isn\'t a visit without a page view', () => {
+    const [view, leave] = visit(['/'], { seconds: 33 });
+    expect(countedVisits([{ ...leave!, device: 'crawler' }], VIEW)).toEqual([]);
+    expect(countedVisits([view!, leave!, { ...leave!, at: leave!.at + 4 * HOUR_MS }], VIEW)).toHaveLength(1);
+  });
+
   it('names its events, without the page view and the leave', () => {
     expect(counted(visit(['/'], { seconds: 30 }, ['venue', 'coach_open', 'coach_open'])).events).toEqual(['venue', 'coach_open']);
   });

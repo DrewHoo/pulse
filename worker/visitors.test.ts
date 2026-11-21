@@ -196,6 +196,27 @@ describe('visitors', () => {
     expect(visitorsOf(events, VIEW, TZ, 'today', justAfter).visitors.map((v) => v.id)).toEqual(['b']);
   });
 
+  it('lists a visitor by a page view since midnight, as the numbers screen counts a day\'s visitors', () => {
+    const justAfter = new Date('2026-11-17T05:20:00Z'); // 12:20 am
+    const at = (minutesBefore: number, device: string, name = VIEW): SiteEvent =>
+      ({ ...visit(device, 0), name, at: justAfter.getTime() - minutesBefore * 60_000 });
+    const events = [
+      at(40, 'a'), at(5, 'a', 'leave'), // viewed a page at 11:40 pm and closed the tab at 12:15 am: yesterday's visitor
+      at(30, 'b'), at(10, 'b'),         // began at 11:50 pm and viewed a page at 12:10 am: today's, and the visit is listed whole
+    ];
+    const { visitors } = visitorsOf(events, VIEW, TZ, 'today', justAfter);
+    expect(visitors.map((v) => [v.id, v.visits[0]!.views])).toEqual([['b', 2]]);
+  });
+
+  it('makes no visit of events with no page view, and no visitor of a browser with nothing else', () => {
+    const leave = (device: string, start: number): SiteEvent => ({ ...visit(device, start), name: 'leave', own: { load: 'x', seconds: 33 } });
+    // a's tab reports again four hours on; the crawler sends a leave and never a page view
+    const events = [visit('a', 300), leave('a', 299), leave('a', 60), leave('crawler', 20)];
+    const { visitors, arrivals } = visitorsOf(events, VIEW, TZ, 'today', NOW);
+    expect(visitors.map((v) => [v.id, v.visits.length, v.visits[0]!.eventCount])).toEqual([['a', 1, 2]]);
+    expect(arrivals.map((a) => a.visitors)).toEqual([1]);
+  });
+
   it('describes the browser by its latest event', () => {
     const facts = { city: 'Chicago', region: 'Illinois', country: 'US', deviceName: 'iPhone', browser: 'Mobile Safari', screenWidth: 390, screenHeight: 844, firstReferrer: 'https://www.google.com/' };
     const [v] = visitorsOf([visit('a', 5, facts)], VIEW, TZ, 'today', NOW).visitors;

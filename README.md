@@ -70,7 +70,10 @@ the week rides in the URL as `&span=week`.
 and the choice rides in the URL as `?v=visitors`.
 
 A **visitor** is a browser, the events that share Mixpanel's `$device_id`. A
-**visit** is a visitor's events with no gap of 30 minutes or more. A card is
+**visit** is a visitor's events with no gap of 30 minutes or more, a page view
+among them. A visitor is listed when a visit of theirs has a page view in the
+span, which is how the numbers screen counts a day's visitors, so the two
+screens say the same number. A card is
 one visitor: the site, time in view and how far down the page got, the place,
 the device and where the visit came from, then its pages and the filters and
 events on them. A tap opens the card (`&d=<id>`) to every page as a link to

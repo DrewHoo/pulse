@@ -45,7 +45,7 @@ const samePage = (a: Address, b: Address) => a.site === b.site && a.page === b.p
 
 /** Every visit in browsers' events, oldest first within a browser. */
 export function countedVisits(events: SiteEvent[], pageview: string): CountedVisit[] {
-  return visitsByBrowser(events).flatMap(({ device, visits }) => visits.map((ofVisit): CountedVisit => {
+  return visitsByBrowser(events, pageview).flatMap(({ device, visits }) => visits.map((ofVisit): CountedVisit => {
     const visit = visitOf(ofVisit, pageview);
     const path = addressesOf(ofVisit, pageview).filter((a, i, all) => i === 0 || !samePage(a, all[i - 1]!));
     return {
