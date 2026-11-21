@@ -105,7 +105,8 @@ button { font: inherit; color: inherit; }
 
 .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; padding: 10px 0 8px; }
 /* fixed tracks, so the bar's percent height has something definite to resolve against */
-.day { display: grid; grid-template-rows: 14px 30px 14px 15px 13px 13px; align-items: end; text-align: center; min-width: 0; }
+.day { display: grid; grid-template-rows: 14px 30px 14px; align-items: end; text-align: center; min-width: 0; }
+.timed .day { grid-template-rows: 14px 30px 14px 15px 13px 13px; }
 .day b { font: 500 11px/1 var(--num); color: var(--mute); margin-bottom: 3px; }
 .day i { display: block; width: 100%; background: var(--ghost); border-radius: 2px 2px 0 0; min-height: 1px; align-self: end; }
 .day.is-today i { background: var(--bar); }
@@ -291,7 +292,8 @@ main.wide { max-width: 1320px; }
 .wide .numbers .measures { margin: 0; }
 .wide .bars { height: 110px; }
 .wide .ticks, .wide .hours .peak { font-size: 11px; }
-.wide .day { grid-template-rows: 14px 44px 14px 18px 15px 15px; }
+.wide .day { grid-template-rows: 14px 44px 14px; }
+.wide .timed .day { grid-template-rows: 14px 44px 14px 18px 15px 15px; }
 .wide .day em { font-size: 11px; }
 @media (min-width: 1280px) {
   .wide .columns { grid-template-columns: 300px minmax(380px, 440px) minmax(0, 1fr); }

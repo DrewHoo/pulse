@@ -61,20 +61,24 @@ function bars(s: Stats): string {
 }
 
 // Under each day's bar: minutes in view, the median visit and pages a visit,
-// of the visits that started that day (worker/landings.ts, Counts).
+// of the visits that started that day (worker/landings.ts, Counts). The page
+// and the worker deploy apart, so an answer from a worker older than the page
+// has days without them, and the days then draw as they did.
 function days(s: Stats): string {
   const peak = Math.max(1, ...s.days.map((d) => d.visitors));
   const letter = (date: string) => 'SMTWTFS'[new Date(`${date}T12:00:00Z`).getUTCDay()];
-  return `<div class="days">${s.days.map((d, i) => `
+  const timed = s.days.every((d) => (d as Partial<typeof d>).visits !== undefined);
+  const time = (d: Stats['days'][number]) => `
+      <em title="minutes in view, ${fmt(d.visits)} visits">${d.median === null ? '–' : `${fmt(Math.round(d.seconds / 60))}m`}</em>
+      <em title="the median visit">${d.median === null ? '–' : duration(d.median)}</em>
+      <em title="pages a visit">${d.visits === 0 ? '–' : d.pagesAVisit.toFixed(1)}</em>`;
+  return `<div class="days${timed ? ' timed' : ''}">${s.days.map((d, i) => `
     <div class="day${i === s.days.length - 1 ? ' is-today' : ''}">
       <b>${fmt(d.visitors)}</b>
       <i style="height:${Math.round((d.visitors / peak) * 100)}%" title="${fmt(d.n)} views"></i>
-      <span>${letter(d.date)}</span>
-      <em title="minutes in view, ${fmt(d.visits)} visits">${d.median === null ? '–' : `${fmt(Math.round(d.seconds / 60))}m`}</em>
-      <em title="the median visit">${d.median === null ? '–' : duration(d.median)}</em>
-      <em title="pages a visit">${d.visits === 0 ? '–' : d.pagesAVisit.toFixed(1)}</em>
+      <span>${letter(d.date)}</span>${timed ? time(d) : ''}
     </div>`).join('')}</div>
-  <p class="foot recur">Under each day: minutes in view, the median visit and pages a visit, of the visits that started that day.</p>`;
+  ${timed ? '<p class="foot recur">Under each day: minutes in view, the median visit and pages a visit, of the visits that started that day.</p>' : ''}`;
 }
 
 // Today's visitors lead each row, then today's views and the week's views
