@@ -70,6 +70,34 @@ describe('the numbers, counted from the export', () => {
   });
 });
 
+describe('time on each day', () => {
+  // a `leave` at a New York time, with the running totals of one page load
+  const leave = (device: string, local: string, seconds: number, url = SK): SiteEvent =>
+    ({ ...view(device, local, url), name: 'leave', own: { load: `${device} ${local}`, seconds, scroll: 50, taps: 0 } });
+  const s = numbers([
+    view('a', '2026-10-11 09:00'), view('a', '2026-10-11 09:01', `${SK}games/`), leave('a', '2026-10-11 09:03', 150, `${SK}games/`),
+    view('b', '2026-10-11 10:00'), leave('b', '2026-10-11 10:01', 30),
+    view('c', '2026-10-11 10:30'), // no leave: a visit, with no time
+    view('d', '2026-10-10 23:50'), leave('d', '2026-10-11 00:05', 600), // started yesterday, so it's yesterday's
+    view('e', '2026-10-11 09:00', 'https://puttingupnumbers.com/nfl/'), leave('e', '2026-10-11 09:01', 40, 'https://puttingupnumbers.com/nfl/'),
+  ]);
+  const [yesterday, today] = s.days.slice(5);
+
+  it('gives a day its visits, seconds in view, the median visit and pages a visit', () => {
+    expect(today).toMatchObject({ date: '2026-10-11', visits: 3, seconds: 180, median: 90, pagesAVisit: 1.3 });
+  });
+
+  it('puts a visit on the day it started, and leaves a day with none empty', () => {
+    expect(yesterday).toMatchObject({ date: '2026-10-10', visits: 1, seconds: 600, median: 600, pagesAVisit: 1 });
+    expect(s.days[0]).toMatchObject({ visits: 0, seconds: 0, median: null, pagesAVisit: 0 });
+  });
+
+  it('counts the visits that landed under the filter', () => {
+    expect(numbers([view('e', '2026-10-11 09:00', 'https://puttingupnumbers.com/nfl/')], 'all').days[6]!.visits).toBe(1);
+    expect(today!.visits).toBe(3);
+  });
+});
+
 describe('where the views came from', () => {
   const at = '2026-10-11 09:00';
   const s = numbers([

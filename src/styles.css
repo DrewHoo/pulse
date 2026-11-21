@@ -15,6 +15,8 @@
   --hi2: #8fbcd0;  /* sky */
   --hi3: #d8c27a;  /* gold */
   --accent: var(--hi3);
+  --warm: #e0623a; /* the tint under a number that is more than most of its column */
+  --cool: #4a8fd0; /* and under one that is less */
   --up: #6fd38a;
   --down: #ff7b72;
   --num: ui-rounded, -apple-system, system-ui, sans-serif;
@@ -103,12 +105,15 @@ button { font: inherit; color: inherit; }
 
 .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; padding: 10px 0 8px; }
 /* fixed tracks, so the bar's percent height has something definite to resolve against */
-.day { display: grid; grid-template-rows: 14px 30px 14px; align-items: end; text-align: center; min-width: 0; }
+.day { display: grid; grid-template-rows: 14px 30px 14px 15px 13px 13px; align-items: end; text-align: center; min-width: 0; }
 .day b { font: 500 11px/1 var(--num); color: var(--mute); margin-bottom: 3px; }
 .day i { display: block; width: 100%; background: var(--ghost); border-radius: 2px 2px 0 0; min-height: 1px; align-self: end; }
 .day.is-today i { background: var(--bar); }
 .day.is-today b { color: var(--fg); }
 .day span { color: var(--mute); font-size: 10px; margin-top: 3px; }
+/* under the day: minutes in view, the median visit, pages a visit */
+.day em { font-style: normal; color: var(--mute); font-size: 10px; white-space: nowrap; }
+.day.is-today em { color: var(--fg); }
 
 .lists { display: grid; gap: 10px; }
 .list header, .row { display: grid; grid-template-columns: 1fr 34px 42px 52px; gap: 6px; align-items: baseline; }
@@ -221,6 +226,44 @@ button.more { display: block; width: 100%; margin-top: 6px; padding: 10px; backg
 .ev span { color: var(--fg); opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ev.passing { opacity: 0.4; }
 
+/* The landings screen: three lists with the same columns. A phone has no room
+   for pages a visit, so the column shows from a desktop's width. */
+.landing-columns, .beside { display: grid; gap: 14px; align-content: start; }
+.counts header, .counts .row { grid-template-columns: minmax(0, 1fr) 34px 38px 42px 46px; }
+.counts .s, .counts .t, .counts .p { text-align: right; white-space: nowrap; }
+.counts .p { display: none; }
+.counts .row .n { color: var(--hi3); }
+.counts .row .t, .counts .row .p { color: var(--mute); font-size: 12px; }
+.counts .row .few { color: var(--ghost); font-size: 11px; }
+.counts small.site { color: var(--hi); font-size: 11px; }
+/* A number in its column's top or bottom quarter is tinted, warm for more and
+   cool for less, and stronger in the top or bottom tenth (src/heat.ts). The
+   tint is the cell's ground: the number keeps its own color, and 2px of the
+   field shows between two tinted cells. */
+.counts .heat { border-radius: 3px; padding: 1px 2px; margin: -1px -2px; }
+.counts .heat-more { background: color-mix(in srgb, var(--warm) 15%, transparent); }
+.counts .heat-most { background: color-mix(in srgb, var(--warm) 34%, transparent); }
+.counts .heat-less { background: color-mix(in srgb, var(--cool) 14%, transparent); }
+.counts .heat-least { background: color-mix(in srgb, var(--cool) 32%, transparent); }
+.counts .key .heat { display: inline-block; margin: 0 5px 0 0; padding: 1px 5px; color: var(--fg); }
+.sorts { margin: 5px 2px 2px; color: var(--mute); font-size: 11px; }
+button.row.pick { width: 100%; background: none; border: 0; text-align: left; cursor: pointer; }
+.pick.on .name { color: var(--hi); font-weight: 600; }
+.landed-on[open] { background: var(--dim); margin: 0 -6px; padding: 0 6px; border-left: 2px solid var(--hi); border-radius: 0 8px 8px 0; }
+.landed-on[open] > summary .name { white-space: normal; word-break: break-word; }
+.went { padding: 2px 0 9px; font-size: 12px; }
+.went p { display: grid; grid-template-columns: 44px minmax(0, 1fr); margin: 4px 2px 0; line-height: 1.45; }
+.went p > b { color: var(--mute); font-size: 11px; font-weight: 500; }
+.went p > span { overflow-wrap: anywhere; }
+.went i { font-style: normal; font-family: var(--num); font-weight: 600; color: var(--hi3); }
+.went em { font-style: normal; color: var(--hi3); }
+.went .alone { color: var(--mute); }
+.went a { color: var(--fg); text-decoration: none; border-bottom: 1px dashed var(--ghost); }
+.went .row.under { font-size: 12px; }
+.wide .landing-columns { grid-template-columns: minmax(400px, 470px) minmax(0, 1fr); gap: 0 28px; align-items: start; }
+.wide .counts header, .wide .counts .row { grid-template-columns: minmax(0, 1fr) 40px 44px 48px 56px 40px; }
+.wide .counts .p { display: block; }
+
 /* A desktop (main.ts sets `wide` at 1000px): the visitors screen as columns.
    Arrivals over the cards on the left and the opened visitor in a pane on the
    right; from 1280px Arrivals is a column of its own. The page scrolls the
@@ -248,7 +291,8 @@ main.wide { max-width: 1320px; }
 .wide .numbers .measures { margin: 0; }
 .wide .bars { height: 110px; }
 .wide .ticks, .wide .hours .peak { font-size: 11px; }
-.wide .day { grid-template-rows: 14px 44px 14px; }
+.wide .day { grid-template-rows: 14px 44px 14px 18px 15px 15px; }
+.wide .day em { font-size: 11px; }
 @media (min-width: 1280px) {
   .wide .columns { grid-template-columns: 300px minmax(380px, 440px) minmax(0, 1fr); }
   .wide .arrivals { grid-row: 1; position: sticky; top: 12px; }

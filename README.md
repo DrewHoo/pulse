@@ -1,7 +1,8 @@
 # pulse
 
-Two screens of drewhoover.com's visitors. The numbers screen counts them, and
-the visitors screen (below) says what each one did.
+Three screens of drewhoover.com's visitors. The numbers screen counts them, the
+visitors screen (below) says what each one did, and the landings screen (below)
+says where the week's visits landed and how far they went.
 
 The numbers are the visitors with their pageviews beside them:
 this hour, today against yesterday at the same hour, the last seven days, how
@@ -103,6 +104,41 @@ arrived by": each address a visit from Reddit landed on, with its visitors and
 when it first arrived. Reddit's referrer never names a thread, so a landing
 address is the nearest thing to a link someone posted, one row a link
 whichever posts and comments carry it.
+
+## The landings screen
+
+Where the last seven days' visits landed, and how far they went from there.
+`specs/landings.spec.md` has the rules and the reasons, and
+`specs/landings/*.png` are the screen. The header's third word opens it, and the
+choice rides in the URL as `?v=landings`.
+
+The screen is three lists with the same columns: a row a site, a row a source
+and site, and a row a landing page. Each row has its visits, the share that
+were a **quick exit** (under 10 seconds, on one page, with no tap), the share
+that **stayed** (a second page, or 60 seconds in view, or 3 taps), the median
+time in view, and from 1000px wide pages a visit. Quick and stayed are shares
+of the visits a `leave` reported on, so the blog, which sends none, has dashes.
+The thresholds are `worker/thresholds.ts`.
+
+A number in the top quarter of its column has a warm ground and one in the
+bottom quarter a cool one, stronger in the top and bottom tenth (`src/heat.ts`),
+so a page with a lot of visits and few that stayed shows without comparing
+numbers. A column is one list's rows with 5 or more measured visits, and a tint
+says more or less, not good or bad.
+
+A site's row narrows the screen to it (`&site=`), and Landings sorts by visits,
+quick exits or stayed (`&sort=`). Pages alike but for one segment read as one
+row with a `*` (`/teams/*/quarterbacks`) when there are 4 or more, and a page
+with one segment is never starred. A landing row opens to its pages when it's
+starred, where its visits came from, the page they saw next, and the events
+they sent with how many of those visits stayed.
+
+`worker/landings.ts` counts all of it from the week of days the numbers screen
+reads, at `/pulse/api/landings`, so the screen costs no Mixpanel call. The same
+counts put three figures under each day of the numbers screen: minutes in view,
+the median visit and pages a visit, of the visits that started that day and
+landed under the picker's site. A visit counts 30 minutes at most toward the
+minutes.
 
 ## The three numbers
 

@@ -3,4 +3,5 @@
 export type { Stats, Row, ShareRow, RedditRow } from '../worker/shape';
 export type { Measures, MeasureWindow, Tally } from '../worker/measures';
 export type { Arrival, EventTotal, Landing, PageSeen, SourceLanding, Visit, Visitor, Visitors } from '../worker/visitors';
+export type { Counts, LandingRow, Landings, PageUnder, SiteRow, SourceRow } from '../worker/landings';
 export type { Span } from '../worker/spans';

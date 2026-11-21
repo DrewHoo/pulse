@@ -340,6 +340,9 @@ function viewsOf(events: SiteEvent[], pageview: string) {
 // (a tab left open, reporting a leave) is on its first event's page.
 const viewedOf = (events: SiteEvent[], settled: SiteEvent[]) => (settled.length > 0 ? settled : [events[0]!]).map(address);
 
+/** The addresses one visit's events were at, in order, without the page views that were passing through. */
+export const addressesOf = (events: SiteEvent[], pageview: string): Address[] => viewedOf(events, viewsOf(events, pageview).settled);
+
 /** One visit's events, oldest first, as the visit the screen shows. */
 export function visitOf(events: SiteEvent[], pageview: string): Visit {
   const first = events[0]!;
@@ -393,8 +396,8 @@ function visitorOf(events: SiteEvent[], visits: Visit[]): Visitor {
   };
 }
 
-// Every browser's events in order, split into its visits.
-function visitsByBrowser(events: SiteEvent[]) {
+/** Every browser's events in order, split into its visits. */
+export function visitsByBrowser(events: SiteEvent[]) {
   const inOrder = [...events].sort((a, b) => a.at - b.at);
   return Object.entries(groupBy(inOrder, (e) => e.device)).map(([device, ofDevice]) => ({
     device, events: ofDevice, visits: splitVisits(ofDevice),

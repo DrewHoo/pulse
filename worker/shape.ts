@@ -37,7 +37,7 @@ export interface RedditRow {
 }
 
 export interface Stats {
-  v: 5;
+  v: 6;
   path: PathKey;
   fetchedAt: string;
   tz: string;
@@ -48,7 +48,8 @@ export interface Stats {
     today: (number | null)[]; yesterday: number[];
     todayVisitors: (number | null)[]; yesterdayVisitors: number[];
   };
-  days: { date: string; n: number; visitors: number }[];
+  // A day's visits are the ones that started on it and landed under the filter (landings.ts, Counts).
+  days: { date: string; n: number; visitors: number; visits: number; seconds: number; median: number | null; pagesAVisit: number }[];
   // Visitors lead and views follow. A visitor count doesn't sum across
   // buckets (one person in two hours is one visitor that day), so the
   // same-hour comparison with yesterday adds up visitor-hours on both sides,

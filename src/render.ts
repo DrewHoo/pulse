@@ -17,6 +17,13 @@ const clock = (h: number, m: number) =>
 
 const hourLabel = (h: number) => (h === 0 ? '12a' : h === 12 ? '12p' : h < 12 ? `${h}a` : `${h - 12}p`);
 
+// "45s", "1m 26s", "2h 5m": time in view.
+export function duration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return seconds % 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds / 60}m`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
 export function ago(fetchedAt: string, now: Date = new Date()): string {
   const s = Math.max(0, Math.round((now.getTime() - new Date(fetchedAt).getTime()) / 1000));
   if (s < 60) return 'just now';
@@ -53,6 +60,8 @@ function bars(s: Stats): string {
   </div>`;
 }
 
+// Under each day's bar: minutes in view, the median visit and pages a visit,
+// of the visits that started that day (worker/landings.ts, Counts).
 function days(s: Stats): string {
   const peak = Math.max(1, ...s.days.map((d) => d.visitors));
   const letter = (date: string) => 'SMTWTFS'[new Date(`${date}T12:00:00Z`).getUTCDay()];
@@ -61,7 +70,11 @@ function days(s: Stats): string {
       <b>${fmt(d.visitors)}</b>
       <i style="height:${Math.round((d.visitors / peak) * 100)}%" title="${fmt(d.n)} views"></i>
       <span>${letter(d.date)}</span>
-    </div>`).join('')}</div>`;
+      <em title="minutes in view, ${fmt(d.visits)} visits">${d.median === null ? '–' : `${fmt(Math.round(d.seconds / 60))}m`}</em>
+      <em title="the median visit">${d.median === null ? '–' : duration(d.median)}</em>
+      <em title="pages a visit">${d.visits === 0 ? '–' : d.pagesAVisit.toFixed(1)}</em>
+    </div>`).join('')}</div>
+  <p class="foot recur">Under each day: minutes in view, the median visit and pages a visit, of the visits that started that day.</p>`;
 }
 
 // Today's visitors lead each row, then today's views and the week's views
@@ -204,13 +217,14 @@ export function measuresList(m: Measures): string {
   </section>`;
 }
 
-// Pulse's two screens. The numbers are counts by hour, day and list; the
-// visitors are the last hours' browsers, one card each (visitors.ts).
-const SCREENS = ['numbers', 'visitors'] as const;
+// Pulse's three screens. The numbers are counts by hour, day and list; the
+// visitors are the last hours' browsers, one card each (visitors.ts); the
+// landings are the week's visits by the page they landed on (landings.ts).
+const SCREENS = ['numbers', 'visitors', 'landings'] as const;
 export type Screen = (typeof SCREENS)[number];
 export const isScreen = (s: string | null): s is Screen => SCREENS.some((name) => name === s);
 
-// The top of both screens: the screens' names, and when the answer was
+// The top of every screen: the screens' names, and when the answer was
 // fetched, which is the refresh button. `asOf` is HTML. main.ts puts the
 // fetching icon (fetching.ts) in the empty span after each paint.
 export function topBar(screen: Screen, asOf = 'pulse'): string {

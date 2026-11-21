@@ -1,8 +1,9 @@
 import './styles.css';
 import { ago, isScreen, render, renderMessage, type Screen } from './render';
 import { CARDS_SHOWN, landingAt, renderVisitors, type VisitorsView } from './visitors';
+import { isSort, renderLandings, ROWS_SHOWN, type LandingsView } from './landings';
 import { DEFAULT_PATH, isPathKey, type PathKey } from '../worker/shape';
-import type { Span, Stats, Visitors } from './stats';
+import type { Landings, Span, Stats, Visitors } from './stats';
 import { isSpan } from '../worker/spans';
 import { fetchEnded, fetchingIcon, fetchStarted } from './fetching';
 
@@ -12,11 +13,12 @@ import { fetchEnded, fetchingIcon, fetchStarted } from './fetching';
 // it (the installed app gets its own storage, separate from Safari's), and is
 // mirrored to localStorage as a fallback for a bookmark that lost its query.
 //
-// The page has two screens, the numbers and the visitors (?v=visitors), and
-// polls only the one it shows. The numbers screen's path picker (?p=), the
-// visitors screen's span (?span=week) and its opened card (?d=) ride in the URL
-// the same way, and localStorage remembers the screen, the path and the span
-// for a bookmark without them.
+// The page has three screens, the numbers, the visitors (?v=visitors) and the
+// landings (?v=landings), and polls only the one it shows. The numbers
+// screen's path picker (?p=), the visitors screen's span (?span=week) and its
+// opened card (?d=), and the landings screen's site (?site=) and sort (?sort=)
+// ride in the URL the same way, and localStorage remembers the screen, the
+// path and the span for a bookmark without them.
 // Each screen and each path filter keeps its own last answer, so switching
 // paints at once and then refreshes.
 
@@ -25,8 +27,9 @@ const TOKEN_KEY = 'pulse.token';
 const SCREEN_KEY = 'pulse.screen';
 const PATH_KEY = 'pulse.path';
 const SPAN_KEY = 'pulse.span';
-const LAST_KEY = 'pulse.last.v5';         // versioned with the stats shape, so an old cached answer is not painted
+const LAST_KEY = 'pulse.last.v6';         // versioned with the stats shape, so an old cached answer is not painted
 const VISITORS_KEY = 'pulse.visitors.v2'; // and this with the visitors shape
+const LANDINGS_KEY = 'pulse.landings.v1'; // and this with the landings shape
 const REFRESH_MS = 5 * 60 * 1000;
 const STALE_MS = 60 * 1000;
 
@@ -101,16 +104,25 @@ const visitorsKey = (span: Span) => `${VISITORS_KEY}.${span}`;
 const desktop = matchMedia('(min-width: 1000px)');
 const view: VisitorsView = { span: initialSpan(), cards: CARDS_SHOWN, site: null, landing: null, open: param('d'), wide: desktop.matches };
 let visitors: Visitors | null = stored<Visitors>(visitorsKey(view.span));
+const paramSort = param('sort');
+const landingsView: LandingsView = { site: param('site'), sort: isSort(paramSort) ? paramSort : 'visits', rows: ROWS_SHOWN };
+let landings: Landings | null = stored<Landings>(LANDINGS_KEY);
 
 let fetchedLocal = 0;
 let inflight: Promise<void> | null = null;
 
 // What a fetch is for. An answer for a screen or a filter the page has since left is dropped.
-const showing = () => (screen === 'numbers' ? `numbers ${path}` : `visitors ${view.span}`);
-const answer = () => (screen === 'numbers' ? stats : visitors);
+const showing = () => ({ numbers: `numbers ${path}`, visitors: `visitors ${view.span}`, landings: 'landings' })[screen];
+const answer = () => ({ numbers: stats, visitors, landings })[screen];
+const apiUrl = () => ({
+  numbers: `${API}stats?path=${encodeURIComponent(path)}`,
+  visitors: `${API}visitors${view.span === 'today' ? '' : `?span=${view.span}`}`,
+  landings: `${API}landings`,
+})[screen];
 
 function html(note: string): string {
   if (screen === 'visitors') return visitors ? renderVisitors(visitors, view, note) : renderMessage(screen, 'pulse', note || 'loading…');
+  if (screen === 'landings') return landings ? renderLandings(landings, landingsView, note) : renderMessage(screen, 'pulse', note || 'loading…');
   return stats ? render(stats, note, path) : renderMessage(screen, 'pulse', note || 'loading…', path);
 }
 
@@ -173,11 +185,19 @@ function toggleCard(id: string) {
   paint();
 }
 
-// Every tap the two screens wire, by the attribute on what was tapped.
+// The landings screen's site and sort. A new one starts the list over at its first rows.
+function narrowLandings(changes: Partial<Pick<LandingsView, 'site' | 'sort'>>) {
+  Object.assign(landingsView, changes, { rows: ROWS_SHOWN });
+  setParams({ site: landingsView.site, sort: landingsView.sort === 'visits' ? null : landingsView.sort });
+  paint();
+}
+
+// Every tap the screens wire, by the attribute on what was tapped.
 root.addEventListener('click', (e) => {
-  const tapped = (e.target as Element).closest<HTMLElement>('#refresh, [data-screen], [data-path], [data-span], [data-more], [data-site], [data-landing], [data-open]');
+  const tapped = (e.target as Element).closest<HTMLElement>('#refresh, [data-screen], [data-path], [data-span], [data-more], [data-site], [data-landing], [data-open], [data-of-site], [data-sort], [data-more-rows]');
   if (!tapped) return;
-  const { site, landing, open } = tapped.dataset;
+  const { site, landing, open, ofSite } = tapped.dataset;
+  const toSort = tapped.dataset.sort ?? null;
   const toScreen = tapped.dataset.screen ?? null;
   const toPath = tapped.dataset.path ?? null;
   const toSpan = tapped.dataset.span ?? null;
@@ -189,6 +209,9 @@ root.addEventListener('click', (e) => {
   else if (site !== undefined) { view.site = site || null; paint(); }
   else if (landing !== undefined) { view.landing = visitors && landing ? landingAt(visitors, landing) : null; paint(); }
   else if (open !== undefined) toggleCard(open);
+  else if (ofSite !== undefined) narrowLandings({ site: ofSite || null });
+  else if (isSort(toSort)) narrowLandings({ sort: toSort });
+  else if (tapped.dataset.moreRows !== undefined) { landingsView.rows += ROWS_SHOWN; paint(); }
 });
 
 async function refresh(force = false): Promise<void> {
@@ -200,7 +223,7 @@ async function refresh(force = false): Promise<void> {
     return;
   }
   const want = showing();
-  const url = screen === 'numbers' ? `${API}stats?path=${encodeURIComponent(path)}` : `${API}visitors${view.span === 'today' ? '' : `?span=${view.span}`}`;
+  const url = apiUrl();
   const failed = (title: string, why: string, note: string) => {
     if (answer()) paint(note);
     else draw(renderMessage(screen, title, why, path));
@@ -220,9 +243,12 @@ async function refresh(force = false): Promise<void> {
       if (screen === 'numbers') {
         stats = body as Stats;
         store.set(lastKey(path), JSON.stringify(stats));
-      } else {
+      } else if (screen === 'visitors') {
         visitors = body as Visitors;
         store.set(visitorsKey(view.span), JSON.stringify(visitors));
+      } else {
+        landings = body as Landings;
+        store.set(LANDINGS_KEY, JSON.stringify(landings));
       }
       fetchedLocal = Date.now();
       ok = true;

@@ -1,4 +1,5 @@
 import { groupBy, uniq } from 'es-toolkit';
+import { countedVisits, countsOf } from './landings';
 import { sourceName } from './names';
 import {
   aiName, INTERNAL, outsideName, pageName, pathUrl, rank, sportName,
@@ -90,13 +91,18 @@ export function numbersOf(
   const cut = <T,>(xs: T[]) => xs.map((n, h) => (h <= now.hour ? n : null));
   const sum = (xs: number[]) => xs.reduce((a, x) => a + x, 0);
   const byDay = groupBy(views, (v) => v.date);
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
-    .map((date) => ({ date, n: byDay[date]?.length ?? 0, visitors: visitorCount(byDay[date] ?? []) }));
+  // a visit belongs to the day it started on and to the filter its landing page is under
+  const visits = countedVisits(events, pageview).filter((v) => !url || v.landing.href.includes(url));
+  const startedOn = groupBy(visits, (v) => local(v.start).date);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map((date) => {
+    const { visits: started, seconds, median, pagesAVisit } = countsOf(startedOn[date] ?? []);
+    return { date, n: byDay[date]?.length ?? 0, visitors: visitorCount(byDay[date] ?? []), visits: started, seconds, median, pagesAVisit };
+  });
   const rows = (nameOf: (e: SiteEvent) => string) => rowsOf(views, now.date, nameOf);
   const [redditRow] = rows((e) => (sourceName(e.referrer) === 'reddit' ? 'reddit' : ''));
 
   return {
-    v: 5,
+    v: 6,
     path,
     fetchedAt: fetchedAt.toISOString(),
     tz: now.tz,

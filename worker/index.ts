@@ -6,12 +6,14 @@
 //   GET /pulse/api/stats     bearer token (or ?k=), the numbers screen's JSON
 //   GET /pulse/api/visitors  bearer token (or ?k=), the visitors screen's JSON,
 //                            since midnight or ?span=week
+//   GET /pulse/api/landings  bearer token (or ?k=), the landings screen's JSON,
+//                            the last seven days
 //   GET /pulse/api/health    no auth, whether the secrets are set
 //
-// Both screens count from Mixpanel's raw export, one UTC day a call, real
+// The screens count from Mixpanel's raw export, one UTC day a call, real
 // users only (shape.ts, realWhere): no bots and none of Drew's own devices.
 // Each day is a cached group, today's for TODAY_SECONDS and a finished day's
-// for FINISHED_DAY_SECONDS, and both screens and every filter read the same
+// for FINISHED_DAY_SECONDS, and every screen and every filter read the same
 // copies. A call over four days took 35 seconds on 2026-11-17 where a day
 // takes 3, hence a day a call.
 //
@@ -37,6 +39,7 @@ import {
   type PathKey, type Previews, type Series,
 } from './shape';
 import { ACTS, MEASURE_DAYS, MEASURES_JQL, measures, RESOLVE_SECONDS, SESSION_MINUTES, type MeasureDays } from './measures';
+import { landingsOf } from './landings';
 import { numbersOf, WEEK_HOURS } from './numbers';
 import { addDays, localNow, offsetMs, type LocalNow } from './time';
 import { isSpan, type Span } from './spans';
@@ -300,12 +303,12 @@ const stats: Route = async (url, env, ctx) => {
     ]);
     const previewRows = previews?.value ? previewsOf(previews.value, now.date) : null;
     const measureDays = measured?.value ?? null;
-    const landings = landingsFrom('reddit', days.events, env.PAGEVIEW_EVENT, at);
+    const fromReddit = landingsFrom('reddit', days.events, env.PAGEVIEW_EVENT, at);
     const numbers = numbersOf(days.events, env.PAGEVIEW_EVENT, now, pathKey, {
       shares: previewRows?.shares ?? null,
       redditLinks: previewRows?.redditLinks ?? null,
       measures: measureDays && measures(measureDays, now.date),
-      redditLandings: landings.filter((landing) => !siteUrl || landing.href.includes(siteUrl)),
+      redditLandings: fromReddit.filter((landing) => !siteUrl || landing.href.includes(siteUrl)),
     }, at);
     return json(
       { ...numbers, staleSince: days.staleSince },
@@ -332,7 +335,21 @@ const visitors: Route = async (url, env, ctx) => {
   }
 };
 
-const ROUTES = new Map<string, Route>([['/stats', stats], ['/visitors', visitors]]);
+// The same week of days the numbers screen reads, so the screen costs no call of its own.
+const landings: Route = async (_url, env, ctx) => {
+  const at = new Date();
+  try {
+    const days = await eventsByDay(ctx, env, exportDays(at, WEEK_HOURS));
+    return json(
+      { ...landingsOf(days.events, env.PAGEVIEW_EVENT, env.MIXPANEL_TZ, at), staleSince: days.staleSince },
+      200, { 'x-pulse-cache': days.cache },
+    );
+  } catch (e) {
+    return failure(e);
+  }
+};
+
+const ROUTES = new Map<string, Route>([['/stats', stats], ['/visitors', visitors], ['/landings', landings]]);
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {

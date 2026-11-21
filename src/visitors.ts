@@ -1,6 +1,6 @@
 import { countBy, uniq } from 'es-toolkit';
 import { DIRECT } from '../worker/names';
-import { ago, esc, topBar } from './render';
+import { ago, duration, esc, topBar } from './render';
 import type { Arrival, EventTotal, Landing, PageSeen, Span, Visit, Visitor, Visitors } from './stats';
 
 // The visitors screen: the count, a chip a site, the arrivals, and a card a
@@ -29,7 +29,7 @@ const ARROW = '<span class="dot">→</span>';
 const dotted = (parts: string[]) => parts.filter(Boolean).join(` ${DOT} `);
 
 // "9:29a", in the phone's own timezone.
-function clock(at: number, seconds = false): string {
+export function clock(at: number, seconds = false): string {
   const time = new Date(at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) });
   return time.replace(/\s?AM$/, 'a').replace(/\s?PM$/, 'p');
 }
@@ -44,12 +44,6 @@ const SPAN_WORDS: Record<Span, { picker: string; nobody: string; earlier: string
 function when(at: number): string {
   const isToday = new Date(at).toDateString() === new Date().toDateString();
   return isToday ? clock(at) : `${new Date(at).toLocaleDateString('en-US', { weekday: 'short' })} ${clock(at)}`;
-}
-
-function duration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return seconds % 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds / 60}m`;
-  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
 const few = (values: string[], shown = 3) =>

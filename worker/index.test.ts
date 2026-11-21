@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
+import type { Landings } from './landings';
 import { MEASURES_JQL, type Measures } from './measures';
 import { WEEK_HOURS } from './numbers';
 import { realWhere, type Stats } from './shape';
@@ -308,6 +309,44 @@ describe('the visitors screen', () => {
 
   it('wants the token', async () => {
     expect((await visitors('wrong')).status).toBe(401);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('the landings screen', () => {
+  const landings = async (token = 'test-token') => settled(await worker.fetch(
+    new Request('https://drewhoover.com/pulse/api/landings', { headers: { authorization: `Bearer ${token}` } }),
+    env, ctx,
+  ));
+
+  it('reads the numbers screen\'s week of days, so it asks Mixpanel nothing after it', async () => {
+    await stats('?path=cfb-streak-king');
+    const asked = calls.length;
+    const res = await landings();
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(asked);
+  });
+
+  it('asks only the export when it is first, a week of days', async () => {
+    await landings();
+    expect(exports()).toHaveLength(weekDays());
+    expect(queries()).toHaveLength(0);
+  });
+
+  it('answers the week\'s visits by site, source and landing page', async () => {
+    exported = [
+      pageview('a', 1, 'https://drewhoover.com/hostile-territory/', { site: 'hostile-territory', $referrer: 'https://www.reddit.com/' }),
+      pageview('b', 30, 'https://drewhoover.com/hostile-territory/coach/ryan-day/', { site: 'hostile-territory' }),
+    ].join('\n');
+    const body = await (await landings()).json() as Landings;
+    expect(body.sites.map((s) => [s.site, s.visits])).toEqual([['hostile territory', 2]]);
+    expect(body.sources.map((s) => [s.source, s.site, s.visits])).toEqual([['direct', 'hostile territory', 1], ['reddit', 'hostile territory', 1]]);
+    expect(body.landings.map((l) => [l.page, l.visits, l.measured])).toEqual([['/', 1, 0], ['/coach/ryan-day', 1, 0]]);
+    expect(body.staleSince).toBeNull();
+  });
+
+  it('wants the token', async () => {
+    expect((await landings('wrong')).status).toBe(401);
     expect(calls).toHaveLength(0);
   });
 });
