@@ -27,5 +27,12 @@
   },
   "dependencies": {
     "morphicons": "^2.0.2"
+  },
+  "packageManager": "pnpm@10.29.2",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd"
+    ]
   }
 }

@@ -7,9 +7,9 @@ import pkg from './package.json' with { type: 'json' };
 // production, and sends the worker's token itself, so a local page needs no
 // ?k=:
 //
-//   npm run dev       the worker running beside Vite (`npm run dev:worker`),
+//   pnpm run dev       the worker running beside Vite (`pnpm run dev:worker`),
 //                     with the token in worker/.dev.vars
-//   npm run dev:live  the deployed worker at drewhoover.com, with the token in
+//   pnpm run dev:live  the deployed worker at drewhoover.com, with the token in
 //                     .env's PULSE_URL. It reads the live worker's cache, so it
 //                     spends no Mixpanel calls of its own.
 const devVarsToken = () => {

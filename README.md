@@ -147,11 +147,11 @@ Instant has no such row.
 2. Secrets, set once per worker and never committed:
 
    ```bash
-   openssl rand -base64 32 | tr '+/' '-_' | tr -d '=' | npx wrangler secret put PULSE_TOKEN -c worker/wrangler.jsonc
-   npx wrangler secret put MIXPANEL_SERVICE_ACCOUNT -c worker/wrangler.jsonc
+   openssl rand -base64 32 | tr '+/' '-_' | tr -d '=' | pnpm exec wrangler secret put PULSE_TOKEN -c worker/wrangler.jsonc
+   pnpm exec wrangler secret put MIXPANEL_SERVICE_ACCOUNT -c worker/wrangler.jsonc
    ```
 
-3. `npm run deploy:worker` from a wrangler-logged-in machine, or add the
+3. `pnpm run deploy:worker` from a wrangler-logged-in machine, or add the
    `CLOUDFLARE_API_TOKEN` repo secret and let `deploy.yml` do it on push.
 4. Project id, timezone, the pageview event and the two Mixpanel hosts (the
    Query API's and the export's) are `vars` in `worker/wrangler.jsonc`.
@@ -162,17 +162,17 @@ Two ways to run the page locally, both at `http://localhost:5173/pulse/`, and
 neither needs `?k=`: Vite's proxy sends the worker's token itself
 (`vite.config.ts`).
 
-- `npm run dev:live` serves the page against the deployed worker at
+- `pnpm run dev:live` serves the page against the deployed worker at
   drewhoover.com, with the token from `.env`'s `PULSE_URL`. It reads the live
   worker's cache, so it spends no Mixpanel calls of its own, and it's the way
   to try a page change on real data before pushing it. A change to the worker
-  isn't in it until `npm run deploy:worker`.
-- `npm run dev` serves the page against a worker running beside it
-  (`npm run dev:worker`), with secrets and the token from `worker/.dev.vars`
+  isn't in it until `pnpm run deploy:worker`.
+- `pnpm run dev` serves the page against a worker running beside it
+  (`pnpm run dev:worker`), with secrets and the token from `worker/.dev.vars`
   (gitignored, beside the wrangler config). A dev worker on the real project
   spends the live app's hourly limit, and an afternoon of it emptied the hour
   on 2026-11-17; point `MIXPANEL_API` and `MIXPANEL_EXPORT` at a mock there, or
   replay a saved export.
 
-`npm test` covers the shaping of Mixpanel's answers, `npm run typecheck` covers
+`pnpm test` covers the shaping of Mixpanel's answers, `pnpm run typecheck` covers
 the page, the Vite config and the worker.
